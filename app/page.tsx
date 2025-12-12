@@ -77,7 +77,7 @@ export default function Page() {
   const [entries, setEntries] = useState<DailyCheck[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
-  // ✅ NEW: 설정 모달 열고 닫기
+  // ✅ 설정 모달
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const today = useMemo(() => formatDate(new Date()), []);
@@ -168,7 +168,6 @@ export default function Page() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* ✅ NEW: 상단에는 D-13만 표시 + 클릭하면 설정 모달 */}
             <DDayPill
               pilotStatus={pilotStatus}
               onClick={() => setSettingsOpen(true)}
@@ -200,7 +199,6 @@ export default function Page() {
         </div>
       </header>
 
-      {/* ✅ NEW: 설정 모달 */}
       {settingsOpen && (
         <SettingsModal
           settings={settings}
@@ -214,7 +212,6 @@ export default function Page() {
       )}
 
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-        {/* 상단에 설정카드 따로 안 깔고, D-13 클릭으로만 수정 */}
         {role === "patient" ? (
           <PatientView
             today={today}
@@ -363,9 +360,7 @@ function PatientView({
   const [trigger, setTrigger] = useState<TriggerCategory | null>(
     todayEntry?.trigger ?? null
   );
-  const [intensity, setIntensity] = useState<number>(
-    todayEntry?.intensity ?? 50
-  );
+  const [intensity, setIntensity] = useState<number>(todayEntry?.intensity ?? 50);
 
   const [sleepHours, setSleepHours] = useState<string>(
     todayEntry ? String(todayEntry.sleepHours) : ""
@@ -381,6 +376,25 @@ function PatientView({
   );
 
   const [saved, setSaved] = useState<boolean>(!!todayEntry);
+
+  // ✅ FIX 1: 저장/로드로 todayEntry가 바뀌면 폼도 동기화
+  useEffect(() => {
+    setEmotion(todayEntry?.emotion ?? null);
+    setTrigger(todayEntry?.trigger ?? null);
+    setIntensity(todayEntry?.intensity ?? 50);
+    setSleepHours(todayEntry ? String(todayEntry.sleepHours) : "");
+    setMedication(todayEntry?.medication ?? null);
+    setNote(todayEntry?.note ?? "");
+    setNoteVisibleToDoctor(todayEntry?.noteVisibleToDoctor ?? false);
+    setSaved(!!todayEntry);
+  }, [todayEntry]);
+
+  // ✅ (선택) 저장 완료 문구 자동으로 사라지게
+  useEffect(() => {
+    if (!saved) return;
+    const t = window.setTimeout(() => setSaved(false), 1500);
+    return () => window.clearTimeout(t);
+  }, [saved]);
 
   const canSubmit =
     !!emotion &&
@@ -572,7 +586,7 @@ function PatientView({
           disabled={!canSubmit}
           className="w-full rounded-xl bg-emerald-500 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
         >
-          {saved ? "오늘 기록 업데이트" : "오늘 기록 저장"}
+          {todayEntry ? "오늘 기록 업데이트" : "오늘 기록 저장"}
         </button>
 
         {saved && (
@@ -597,12 +611,21 @@ function DoctorView({
     return [...entries].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-14);
   }, [entries]);
 
-  const emotionCounts = useMemo(() => countBy(last14, (d) => d.emotion), [last14]);
-  const triggerCounts = useMemo(() => countBy(last14, (d) => d.trigger), [last14]);
+  const emotionCounts = useMemo(
+    () => countBy(last14, (d) => d.emotion),
+    [last14]
+  );
+  const triggerCounts = useMemo(
+    () => countBy(last14, (d) => d.trigger),
+    [last14]
+  );
 
   const sleepAvg = useMemo(() => {
     if (!last14.length) return null;
-    const sum = last14.reduce((acc, d) => acc + (Number.isFinite(d.sleepHours) ? d.sleepHours : 0), 0);
+    const sum = last14.reduce(
+      (acc, d) => acc + (Number.isFinite(d.sleepHours) ? d.sleepHours : 0),
+      0
+    );
     return round1(sum / last14.length);
   }, [last14]);
 
@@ -621,6 +644,44 @@ function DoctorView({
     [last14]
   );
 
+  // ✅ FIX 2: 복사용 리포트 텍스트 + 버튼
+  const reportText = useMemo(() => {
+    const lines: string[] = [];
+    lines.push(`Checky 의사용 요약 (최근 14일)`);
+    lines.push(`파일럿 종료일: ${settings.pilotEndDate}`);
+    lines.push("");
+    lines.push(
+      `주요 감정: ${topKey(emotionCounts) ?? "-"} / 주요 원인: ${
+        topKey(triggerCounts) ?? "-"
+      }`
+    );
+    lines.push(`평균 수면: ${sleepAvg ?? "-"}시간`);
+    lines.push(
+      `약 복용: 정상 ${medStats["정상 복용"]} · 누락 ${medStats["일부 누락"]} · 미복용 ${medStats["복용 안 함"]}`
+    );
+    lines.push("");
+    lines.push("[일자별]");
+    for (const d of last14) {
+      lines.push(
+        `${d.date} | ${d.emotion}(${d.intensity}/100) | ${d.trigger} | 수면 ${d.sleepHours}h | 약 ${d.medication}`
+      );
+      if (d.note && d.noteVisibleToDoctor) {
+        lines.push(`  메모: ${d.note}`);
+      }
+    }
+    return lines.join("\n");
+  }, [settings.pilotEndDate, last14, emotionCounts, triggerCounts, sleepAvg, medStats]);
+
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(reportText);
+      alert("리포트를 복사했습니다.");
+    } catch (e) {
+      console.error(e);
+      alert("복사에 실패했습니다. 브라우저 권한을 확인하세요.");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <header>
@@ -628,7 +689,18 @@ function DoctorView({
         <p className="text-sm text-slate-600">
           핵심 항목(감정/원인/수면/약)은 항상 포함되고, 메모는 “의사 공개”만 표시됩니다.
         </p>
-        <p className="mt-1 text-xs text-slate-500">파일럿 종료일: {settings.pilotEndDate}</p>
+        <p className="mt-1 text-xs text-slate-500">
+          파일럿 종료일: {settings.pilotEndDate}
+        </p>
+
+        <div className="mt-3">
+          <button
+            onClick={copyReport}
+            className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
+          >
+            리포트 복사
+          </button>
+        </div>
       </header>
 
       {last14.length === 0 ? (
@@ -640,11 +712,14 @@ function DoctorView({
           <section className="rounded-2xl bg-white p-5 shadow-sm space-y-2">
             <h2 className="text-sm font-semibold text-slate-800">핵심 요약</h2>
             <div className="text-sm text-slate-800">
-              주요 감정: <span className="font-semibold">{topKey(emotionCounts) ?? "-"}</span> ·
-              주요 원인: <span className="font-semibold">{topKey(triggerCounts) ?? "-"}</span>
+              주요 감정:{" "}
+              <span className="font-semibold">{topKey(emotionCounts) ?? "-"}</span>{" "}
+              · 주요 원인:{" "}
+              <span className="font-semibold">{topKey(triggerCounts) ?? "-"}</span>
             </div>
             <div className="text-sm text-slate-800">
-              평균 수면: <span className="font-semibold">{sleepAvg ?? "-"}</span> 시간
+              평균 수면: <span className="font-semibold">{sleepAvg ?? "-"}</span>{" "}
+              시간
             </div>
             <div className="text-sm text-slate-800">
               약 복용:{" "}
@@ -660,15 +735,22 @@ function DoctorView({
             </h2>
             <div className="flex gap-2 overflow-x-auto rounded-xl bg-slate-50 p-3 text-xs">
               {last14.map((d) => (
-                <div key={d.date} className="flex min-w-[88px] flex-col items-center gap-1">
-                  <span className="text-[10px] text-slate-500">{d.date.slice(5)}</span>
+                <div
+                  key={d.date}
+                  className="flex min-w-[88px] flex-col items-center gap-1"
+                >
+                  <span className="text-[10px] text-slate-500">
+                    {d.date.slice(5)}
+                  </span>
                   <div className="flex h-20 w-6 items-end rounded-full bg-slate-100">
                     <div
                       className="w-full rounded-full bg-emerald-400"
                       style={{ height: `${clamp(d.intensity, 0, 100)}%` }}
                     />
                   </div>
-                  <span className="text-[11px] font-medium text-slate-700">{d.emotion}</span>
+                  <span className="text-[11px] font-medium text-slate-700">
+                    {d.emotion}
+                  </span>
                   <span className="text-[10px] text-slate-500">
                     {d.intensity}/100 · {d.sleepHours}h · {d.medication}
                   </span>
@@ -711,7 +793,10 @@ function isValidSleepHours(v: string): boolean {
   return n >= 0 && n <= 24;
 }
 
-function countBy<T>(arr: T[], keyFn: (item: T) => string): Record<string, number> {
+function countBy<T>(
+  arr: T[],
+  keyFn: (item: T) => string
+): Record<string, number> {
   const res: Record<string, number> = {};
   for (const item of arr) {
     const k = keyFn(item);
