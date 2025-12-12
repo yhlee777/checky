@@ -68,14 +68,17 @@ const TRIGGERS: TriggerCategory[] = [
 
 const MEDS: MedicationStatus[] = ["정상 복용", "일부 누락", "복용 안 함"];
 
-const SETTINGS_KEY = "checky_settings_v2";
-const ENTRIES_KEY = "checky_entries_v2";
+const SETTINGS_KEY = "checky_settings_v3";
+const ENTRIES_KEY = "checky_entries_v3";
 
 export default function Page() {
   const [role, setRole] = useState<Role>("patient");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [entries, setEntries] = useState<DailyCheck[]>([]);
   const [hydrated, setHydrated] = useState(false);
+
+  // ✅ NEW: 설정 모달 열고 닫기
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const today = useMemo(() => formatDate(new Date()), []);
 
@@ -131,12 +134,8 @@ export default function Page() {
     const end = parseDate(settings.pilotEndDate);
     const diff = diffDays(now, end);
 
-    if (diff < 0) {
-      return { state: "ended" as const, dDayText: "기간 종료", diff };
-    }
-    if (diff === 0) {
-      return { state: "last" as const, dDayText: "D-DAY (오늘까지)", diff };
-    }
+    if (diff < 0) return { state: "ended" as const, dDayText: "종료", diff };
+    if (diff === 0) return { state: "last" as const, dDayText: "D-DAY", diff };
     return { state: "running" as const, dDayText: `D-${diff}`, diff };
   }, [settings]);
 
@@ -168,11 +167,11 @@ export default function Page() {
             <span className="text-lg font-semibold">Checky</span>
           </div>
 
-          <div className="flex items-center gap-4">
-            <PilotBadge
-              today={today}
-              settings={settings}
+          <div className="flex items-center gap-2">
+            {/* ✅ NEW: 상단에는 D-13만 표시 + 클릭하면 설정 모달 */}
+            <DDayPill
               pilotStatus={pilotStatus}
+              onClick={() => setSettingsOpen(true)}
             />
 
             <div className="flex gap-2 rounded-full bg-slate-100 p-1 text-sm">
@@ -184,7 +183,7 @@ export default function Page() {
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                환자 화면
+                환자
               </button>
               <button
                 onClick={() => setRole("doctor")}
@@ -194,20 +193,28 @@ export default function Page() {
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                의사 화면
+                의사
               </button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-        <SettingsCard
+      {/* ✅ NEW: 설정 모달 */}
+      {settingsOpen && (
+        <SettingsModal
           settings={settings}
-          onChange={setSettings}
           pilotStatus={pilotStatus}
+          onClose={() => setSettingsOpen(false)}
+          onSave={(next) => {
+            setSettings(next);
+            setSettingsOpen(false);
+          }}
         />
+      )}
 
+      <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+        {/* 상단에 설정카드 따로 안 깔고, D-13 클릭으로만 수정 */}
         {role === "patient" ? (
           <PatientView
             today={today}
@@ -223,90 +230,117 @@ export default function Page() {
   );
 }
 
-function PilotBadge({
-  today,
-  settings,
+function DDayPill({
   pilotStatus,
+  onClick,
 }: {
-  today: string;
-  settings: Settings;
   pilotStatus: { state: string; dDayText: string; diff: number } | null;
+  onClick: () => void;
 }) {
-  if (!pilotStatus) return null;
+  const text = pilotStatus?.dDayText ?? "D-?";
+  const tone =
+    pilotStatus?.state === "ended"
+      ? "bg-slate-200 text-slate-600"
+      : "bg-emerald-100 text-emerald-800";
+
   return (
-    <div className="hidden sm:flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-      <span>
-        오늘: <span className="font-medium">{today}</span>
-      </span>
-      <span>
-        다음 진료일까지{" "}
-        <span className="font-semibold text-emerald-600">
-          {pilotStatus.dDayText}
-        </span>{" "}
-        (종료 {settings.pilotEndDate})
-      </span>
-    </div>
+    <button
+      onClick={onClick}
+      className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${tone} hover:opacity-90`}
+      title="기간 설정 수정"
+    >
+      {text}
+    </button>
   );
 }
 
-function SettingsCard({
+function SettingsModal({
   settings,
-  onChange,
   pilotStatus,
+  onClose,
+  onSave,
 }: {
   settings: Settings;
-  onChange: (s: Settings) => void;
   pilotStatus: { state: string; dDayText: string; diff: number } | null;
+  onClose: () => void;
+  onSave: (next: Settings) => void;
 }) {
+  const [endDate, setEndDate] = useState(settings.pilotEndDate);
+  const [time, setTime] = useState(settings.reminderTime);
+
   return (
-    <section className="rounded-2xl bg-white p-4 shadow-sm space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-800">
-            2주 파일럿 설정
-          </h2>
-          <p className="text-xs text-slate-500">
-            다음 진료일까지 매일 밤 1분만 기록합니다. (현재는 폰 기본 알람 권장)
-          </p>
-        </div>
-        {pilotStatus && (
-          <span
-            className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
-              pilotStatus.state === "ended"
-                ? "bg-slate-100 text-slate-500"
-                : "bg-emerald-50 text-emerald-700"
-            }`}
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div
+        className="absolute inset-0 bg-black/30"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-4 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">
+              파일럿 기간 설정
+            </h3>
+            <p className="text-xs text-slate-500">
+              상단 {pilotStatus?.dDayText ?? ""}은 “다음 진료일까지 남은 기간”입니다.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
           >
-            {pilotStatus.dDayText}
-          </span>
-        )}
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500">파일럿 종료일 (다음 진료일)</label>
-          <input
-            type="date"
-            value={settings.pilotEndDate}
-            onChange={(e) => onChange({ ...settings, pilotEndDate: e.target.value })}
-            className="rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
-          />
+            닫기
+          </button>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500">기록 시간 (권장)</label>
-          <input
-            type="time"
-            value={settings.reminderTime}
-            onChange={(e) => onChange({ ...settings, reminderTime: e.target.value })}
-            className="rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-emerald-500"
-          />
-          <div className="text-[10px] text-slate-400">
-            폰 알람에 “Checky”로 맞춰두면 완전 위장됩니다.
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">
+              종료일 (다음 진료일)
+            </label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">기록 시간 (권장)</label>
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+            />
+            <div className="text-[11px] text-slate-400">
+              (현재는 푸시 대신 폰 기본 알람 추천)
+            </div>
           </div>
         </div>
+
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={onClose}
+            className="w-1/2 rounded-xl border border-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            취소
+          </button>
+          <button
+            onClick={() =>
+              onSave({
+                pilotEndDate: endDate,
+                reminderTime: time,
+              })
+            }
+            className="w-1/2 rounded-xl bg-emerald-500 py-2 text-sm font-semibold text-white hover:opacity-95"
+          >
+            저장
+          </button>
+        </div>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -323,9 +357,15 @@ function PatientView({
 }) {
   const isEnded = pilotStatus?.state === "ended";
 
-  const [emotion, setEmotion] = useState<Emotion | null>(todayEntry?.emotion ?? null);
-  const [trigger, setTrigger] = useState<TriggerCategory | null>(todayEntry?.trigger ?? null);
-  const [intensity, setIntensity] = useState<number>(todayEntry?.intensity ?? 50);
+  const [emotion, setEmotion] = useState<Emotion | null>(
+    todayEntry?.emotion ?? null
+  );
+  const [trigger, setTrigger] = useState<TriggerCategory | null>(
+    todayEntry?.trigger ?? null
+  );
+  const [intensity, setIntensity] = useState<number>(
+    todayEntry?.intensity ?? 50
+  );
 
   const [sleepHours, setSleepHours] = useState<string>(
     todayEntry ? String(todayEntry.sleepHours) : ""
@@ -374,19 +414,21 @@ function PatientView({
       <div>
         <h1 className="mb-1 text-2xl font-semibold">오늘 하루 체크</h1>
         <p className="text-xs text-slate-600">
-          {today} · 다음 진료일까지 {pilotStatus?.dDayText ?? ""} · 하루 1분
+          {today} · {pilotStatus?.dDayText ?? ""} · 하루 1분
         </p>
       </div>
 
       {isEnded && (
         <div className="rounded-xl bg-slate-100 p-3 text-xs text-slate-600">
-          파일럿 기간이 종료되었습니다. 종료일을 바꾸거나, 의사 화면에서 리포트를
-          확인하세요.
+          파일럿 기간이 종료되었습니다. 상단의 D-Day를 눌러 종료일을 수정하거나,
+          의사 화면에서 리포트를 확인하세요.
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-6 rounded-2xl bg-white p-5 shadow-sm">
-        {/* 감정 */}
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-6 rounded-2xl bg-white p-5 shadow-sm"
+      >
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">
             1) 오늘 하루를 가장 지배한 감정
@@ -410,7 +452,6 @@ function PatientView({
           </div>
         </section>
 
-        {/* 원인 */}
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">
             2) 그 감정의 가장 큰 원인(Trigger)
@@ -434,7 +475,6 @@ function PatientView({
           </div>
         </section>
 
-        {/* 강도 */}
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">
             3) 감정 강도 (0~100)
@@ -449,11 +489,12 @@ function PatientView({
               disabled={isEnded}
               className="w-full"
             />
-            <span className="w-10 text-right text-sm font-medium">{intensity}</span>
+            <span className="w-10 text-right text-sm font-medium">
+              {intensity}
+            </span>
           </div>
         </section>
 
-        {/* 수면 */}
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">
             4) 수면 시간 (시간)
@@ -473,15 +514,14 @@ function PatientView({
             />
             <span className="text-sm text-slate-600">시간</span>
             {!isValidSleepHours(sleepHours) && sleepHours !== "" && (
-              <span className="text-xs text-rose-500">0~24 사이로 입력</span>
+              <span className="text-xs text-rose-500">0~24</span>
             )}
           </div>
           <p className="mt-1 text-[11px] text-slate-500">
-            어젯밤 실제 잔 시간을 대략 입력해도 됩니다.
+            대략 입력해도 됩니다.
           </p>
         </section>
 
-        {/* 약 복용 */}
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">
             5) 약 복용 여부
@@ -505,7 +545,6 @@ function PatientView({
           </div>
         </section>
 
-        {/* 메모 */}
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-800">
             6) 기타 (선택)
@@ -538,7 +577,7 @@ function PatientView({
 
         {saved && (
           <p className="text-[11px] text-emerald-600">
-            저장 완료 ✔ 내일도 같은 방식으로 1분만 기록하면 됩니다.
+            저장 완료 ✔
           </p>
         )}
       </form>
@@ -546,7 +585,13 @@ function PatientView({
   );
 }
 
-function DoctorView({ entries, settings }: { entries: DailyCheck[]; settings: Settings }) {
+function DoctorView({
+  entries,
+  settings,
+}: {
+  entries: DailyCheck[];
+  settings: Settings;
+}) {
   const last14 = useMemo(() => {
     if (!entries.length) return [];
     return [...entries].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-14);
@@ -581,19 +626,17 @@ function DoctorView({ entries, settings }: { entries: DailyCheck[]; settings: Se
       <header>
         <h1 className="mb-1 text-2xl font-semibold">의사용 리포트 (최근 14일)</h1>
         <p className="text-sm text-slate-600">
-          환자가 기록한 데이터 중 핵심 항목(감정/원인/수면/약)은 항상 포함되고,
-          메모는 “의사 공개”로 선택된 것만 표시됩니다.
+          핵심 항목(감정/원인/수면/약)은 항상 포함되고, 메모는 “의사 공개”만 표시됩니다.
         </p>
         <p className="mt-1 text-xs text-slate-500">파일럿 종료일: {settings.pilotEndDate}</p>
       </header>
 
       {last14.length === 0 ? (
         <div className="rounded-2xl bg-white p-5 text-sm text-slate-600 shadow-sm">
-          아직 기록이 없습니다. 최소 3일만 쌓여도 패턴이 보이기 시작합니다.
+          아직 기록이 없습니다.
         </div>
       ) : (
         <>
-          {/* 핵심 요약 */}
           <section className="rounded-2xl bg-white p-5 shadow-sm space-y-2">
             <h2 className="text-sm font-semibold text-slate-800">핵심 요약</h2>
             <div className="text-sm text-slate-800">
@@ -609,15 +652,11 @@ function DoctorView({ entries, settings }: { entries: DailyCheck[]; settings: Se
               <span className="font-semibold">누락 {medStats["일부 누락"]}</span> ·{" "}
               <span className="font-semibold">미복용 {medStats["복용 안 함"]}</span>
             </div>
-            <p className="text-xs text-slate-500">
-              * “누락/미복용”이 있는 날의 감정 강도·수면과 함께 비교해보면 진료에 도움이 됩니다.
-            </p>
           </section>
 
-          {/* 감정 그래프 */}
           <section className="rounded-2xl bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-slate-800">
-              감정 강도 추이 (필수 데이터)
+              감정 강도 추이
             </h2>
             <div className="flex gap-2 overflow-x-auto rounded-xl bg-slate-50 p-3 text-xs">
               {last14.map((d) => (
@@ -631,59 +670,25 @@ function DoctorView({ entries, settings }: { entries: DailyCheck[]; settings: Se
                   </div>
                   <span className="text-[11px] font-medium text-slate-700">{d.emotion}</span>
                   <span className="text-[10px] text-slate-500">
-                    {d.intensity}/100 · {d.sleepHours}h
+                    {d.intensity}/100 · {d.sleepHours}h · {d.medication}
                   </span>
                 </div>
               ))}
             </div>
           </section>
 
-          {/* Top */}
-          <section className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold text-slate-800">감정 Top</h2>
-              <ul className="space-y-1 text-sm">
-                {Object.entries(emotionCounts)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([k, v]) => (
-                    <li key={k} className="flex items-center justify-between">
-                      <span>{k}</span>
-                      <span className="text-slate-500">{v}회</span>
-                    </li>
-                  ))}
-              </ul>
-            </div>
-
-            <div className="rounded-2xl bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold text-slate-800">원인 Top</h2>
-              <ul className="space-y-1 text-sm">
-                {Object.entries(triggerCounts)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([k, v]) => (
-                    <li key={k} className="flex items-center justify-between">
-                      <span>{k}</span>
-                      <span className="text-slate-500">{v}회</span>
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          </section>
-
-          {/* 공개 메모 */}
           <section className="rounded-2xl bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-slate-800">
-              공개된 메모 (환자 선택 공개)
+              공개된 메모
             </h2>
             {openNotes.length === 0 ? (
-              <p className="text-xs text-slate-500">
-                이번 기간에는 공개된 메모가 없습니다.
-              </p>
+              <p className="text-xs text-slate-500">공개된 메모가 없습니다.</p>
             ) : (
               <ul className="space-y-2 text-sm">
                 {openNotes.map((d) => (
                   <li key={d.date} className="rounded-xl bg-slate-50 p-3">
                     <div className="mb-1 text-[11px] text-slate-500">
-                      {d.date} · {d.emotion} / {d.trigger} · 수면 {d.sleepHours}h · 약 {d.medication}
+                      {d.date} · {d.emotion} / {d.trigger}
                     </div>
                     <div className="text-slate-800">{d.note}</div>
                   </li>
