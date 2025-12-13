@@ -1,0 +1,20 @@
+{
+  "name": "Checky",
+  "short_name": "Checky",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/checky-128.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
+    {
+      "src": "/checky-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
