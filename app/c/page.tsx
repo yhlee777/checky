@@ -3,16 +3,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import type { Patient, SessionRow, PatientLog, Homework, RangeSummary, Role } from "@/lib/types";
+import type {
+  Patient,
+  SessionRow,
+  PatientLog,
+  Homework,
+  RangeSummary,
+  Role,
+} from "@/lib/types";
 import { Badge, Btn, Card, Field } from "@/components/ui";
 
 /* ===============================
  * helpers
  * =============================== */
-function parseISO(iso: string) {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
 function addDays(d: Date, days: number) {
   const c = new Date(d.getTime());
   c.setDate(c.getDate() + days);
@@ -35,6 +38,10 @@ type HomeworkDraft = {
   _deleted?: boolean;
   _dirty?: boolean;
 };
+
+function normTitle(s: string) {
+  return s.trim().replace(/\s+/g, " ").toLowerCase();
+}
 
 export default function Page() {
   const router = useRouter();
@@ -99,6 +106,10 @@ export default function Page() {
     () => homeworksDraft.filter((h) => !h._deleted && !h.is_active),
     [homeworksDraft]
   );
+  const deletedDraft = useMemo(
+    () => homeworksDraft.filter((h) => !!h._deleted),
+    [homeworksDraft]
+  );
 
   // add patient
   const [pName, setPName] = useState("");
@@ -127,13 +138,13 @@ export default function Page() {
       }
       setUserId(uid);
 
-      const { data: prof } = await supabase
+      const { data: prof, error } = await supabase
         .from("profiles")
         .select("role")
         .eq("user_id", uid)
         .single();
 
-      if (!prof?.role) {
+      if (error || !prof?.role) {
         router.replace("/role");
         return;
       }
@@ -158,7 +169,8 @@ export default function Page() {
   const fetchPatients = async () => {
     const { data, error } = await supabase
       .from("patients")
-      .select("*")
+      // ⬇️ [수정됨] invite_codes 테이블을 조인해서 code를 가져옵니다.
+      .select("*, invite_codes(code)")
       .order("created_at", { ascending: false });
     if (error) throw error;
 
@@ -192,6 +204,8 @@ export default function Page() {
         id: h.id,
         title: h.title,
         is_active: h.is_active,
+        _dirty: false,
+        _deleted: false,
       }))
     );
   };
@@ -206,7 +220,18 @@ export default function Page() {
 
     const arr = (data ?? []) as RangeSummary[];
     setRangeSummaries(arr);
-    if (arr.length && !selectedRangeKey) setSelectedRangeKey(`${arr[0].start_no}-${arr[0].end_no}`);
+
+    // 안전: 선택값이 비었거나 현재 선택이 사라졌으면 최신으로
+    if (arr.length) {
+      const latestKey = `${arr[0].start_no}-${arr[0].end_no}`;
+      if (!selectedRangeKey) setSelectedRangeKey(latestKey);
+      else {
+        const exists = arr.some((r) => `${r.start_no}-${r.end_no}` === selectedRangeKey);
+        if (!exists) setSelectedRangeKey(latestKey);
+      }
+    } else {
+      setSelectedRangeKey("");
+    }
   };
 
   const fetchLogsForRange = async (pid: string, start: string, end: string) => {
@@ -224,6 +249,7 @@ export default function Page() {
   useEffect(() => {
     if (!userId) return;
     fetchPatients().catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   useEffect(() => {
@@ -231,13 +257,15 @@ export default function Page() {
     fetchSessions(selectedPatientId).catch(console.error);
     fetchHomeworks(selectedPatientId).catch(console.error);
     fetchRangeSummaries(selectedPatientId).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPatientId]);
 
   // patient 바뀌면 예약 draft 동기화
   useEffect(() => {
     if (!selectedPatient) return;
-    if (selectedPatient.next_session_date) setNextReserve(selectedPatient.next_session_date);
-    if (selectedPatient.reminder_time) setNextReminder(selectedPatient.reminder_time);
+    setNextReserve(selectedPatient.next_session_date ?? dateISO(addDays(new Date(), 7)));
+    setNextReminder(selectedPatient.reminder_time ?? "23:00");
+    setSaveMsg("");
   }, [selectedPatient?.id]);
 
   // range 바뀌면 logs 로딩
@@ -247,6 +275,7 @@ export default function Page() {
       return;
     }
     fetchLogsForRange(selectedPatientId, selectedRange.start_date, selectedRange.end_date).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPatientId, selectedRangeKey]);
 
   /* ===============================
@@ -255,32 +284,55 @@ export default function Page() {
   const addHomeworkDraft = () => {
     const title = hwTitle.trim();
     if (!title) return;
+
+    // ✅ 중복 방지(프론트): 삭제 아닌 항목들 기준으로 중복 금지
+    const key = normTitle(title);
+    const exists = homeworksDraft.some((h) => !h._deleted && normTitle(h.title) === key);
+    if (exists) {
+      setSaveMsg("같은 숙제가 이미 있습니다(중복 방지).");
+      return;
+    }
+
     const tmpId = `tmp_${Math.random().toString(16).slice(2)}`;
     setHomeworksDraft((prev) => [{ id: tmpId, title, is_active: true, _dirty: true }, ...prev]);
     setHwTitle("");
   };
 
   const editHomework = (id: string, title: string) => {
-    setHomeworksDraft((prev) => prev.map((h) => (h.id === id ? { ...h, title, _dirty: true } : h)));
+    setHomeworksDraft((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, title, _dirty: true } : h))
+    );
   };
 
   const toggleHomework = (id: string, is_active: boolean) => {
-    setHomeworksDraft((prev) => prev.map((h) => (h.id === id ? { ...h, is_active, _dirty: true } : h)));
+    setHomeworksDraft((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, is_active, _dirty: true } : h))
+    );
   };
 
   const deleteHomework = (id: string) => {
-    setHomeworksDraft((prev) => prev.map((h) => (h.id === id ? { ...h, _deleted: true, _dirty: true } : h)));
+    setHomeworksDraft((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, _deleted: true, _dirty: true } : h))
+    );
   };
 
   const undoDeleteHomework = (id: string) => {
-    setHomeworksDraft((prev) => prev.map((h) => (h.id === id ? { ...h, _deleted: false, _dirty: true } : h)));
+    setHomeworksDraft((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, _deleted: false, _dirty: true } : h))
+    );
   };
 
   const hasPendingChanges = useMemo(() => {
     if (!selectedPatient) return false;
+
     const reserveDirty = (selectedPatient.next_session_date ?? "") !== (nextReserve ?? "");
     const reminderDirty = (selectedPatient.reminder_time ?? "") !== (nextReminder ?? "");
     const hwDirty = homeworksDraft.some((h) => h._dirty);
+
+    // ✅ 숙제 “편집 중 공백” 방지(저장 전에 잡아주기)
+    const hasBlank = homeworksDraft.some((h) => !h._deleted && !h.title.trim());
+    if (hasBlank) return true;
+
     return reserveDirty || reminderDirty || hwDirty;
   }, [selectedPatient, nextReserve, nextReminder, homeworksDraft]);
 
@@ -307,15 +359,41 @@ export default function Page() {
     if (error) return alert(error.message);
 
     alert(`초대코드: ${data[0].invite_code}`);
-    setPName(""); setPConcern(""); setPMemo("");
+    setPName("");
+    setPConcern("");
+    setPMemo("");
 
     await fetchPatients();
     setSelectedPatientId(data[0].patient_id);
   };
 
-  // ✅ (1) 연타/중복 방지: UX + 서버락/unique
+  // ✅ 원자 RPC: complete_session_atomic
+  // - 예약 업데이트
+  // - 숙제 변경 반영
+  // - 세션 완료(다음 세션 생성 포함)
+  // ✅ 중복 방지:
+  // - 프론트: 버튼 연타 방지(saving)
+  // - 서버: RPC 내부에서 advisory lock + unique 로 “한번만”
   const saveAndComplete = async () => {
     if (!selectedPatient || saving) return;
+
+    // 저장 직전 검증: 공백 title 차단
+    if (homeworksDraft.some((h) => !h._deleted && !h.title.trim())) {
+      alert("숙제 제목이 비어있는 항목이 있습니다.");
+      return;
+    }
+
+    // 저장 직전 중복 검증(한 번 더)
+    const seen = new Set<string>();
+    for (const h of homeworksDraft) {
+      if (h._deleted) continue;
+      const k = normTitle(h.title);
+      if (seen.has(k)) {
+        alert("숙제 중복이 있습니다. (같은 제목)");
+        return;
+      }
+      seen.add(k);
+    }
 
     setSaving(true);
     setSaveMsg("");
@@ -332,12 +410,12 @@ export default function Page() {
         p_patient_id: selectedPatient.id,
         p_next_session_date: nextReserve,
         p_reminder_time: nextReminder,
-        p_homeworks: payload,
+        p_homeworks: payload, // jsonb
       });
 
       if (error) {
-        // 혹시나 유니크 충돌/중복 실행이 들어와도 UX는 "이미 처리됨"으로 흡수
-        if ((error.message ?? "").toLowerCase().includes("duplicate")) {
+        const msg = (error.message ?? "").toLowerCase();
+        if (msg.includes("duplicate") || msg.includes("already") || msg.includes("unique")) {
           setSaveMsg("이미 처리됨(중복 방지)");
         } else {
           throw error;
@@ -348,7 +426,7 @@ export default function Page() {
         setSaveMsg("저장 완료");
       }
 
-      // (2)(3) 요약/표/리스트 모두 갱신
+      // 화면 전체를 “현재 사실”로 동기화
       await fetchPatients();
       await fetchSessions(selectedPatient.id);
       await fetchHomeworks(selectedPatient.id);
@@ -369,21 +447,25 @@ export default function Page() {
   if (!userId) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-white text-slate-900">
+      {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto p-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="font-bold tracking-tight">Checky</div>
+            <div className="font-semibold tracking-tight">Checky</div>
             <Badge>상담자</Badge>
           </div>
-          <Btn variant="secondary" onClick={signOut}>로그아웃</Btn>
+          <Btn variant="secondary" onClick={signOut}>
+            로그아웃
+          </Btn>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-4 pb-28">
+      {/* Body */}
+      <main className="max-w-6xl mx-auto px-4 py-4 pb-28">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Left */}
-          <div className="lg:col-span-4 space-y-4">
+          <aside className="lg:col-span-4 space-y-4">
             <Card>
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">환자</h2>
@@ -394,7 +476,7 @@ export default function Page() {
                 <Field placeholder="검색: 이름/주호소" value={q} onChange={(e) => setQ(e.target.value)} />
               </div>
 
-              <div className="mt-3 max-h-[52vh] overflow-auto pr-1 space-y-1">
+              <div className="mt-3 max-h-[44vh] lg:max-h-[52vh] overflow-auto pr-1 space-y-1">
                 {filteredPatients.length === 0 ? (
                   <p className="text-sm text-slate-600 py-6 text-center">아직 환자가 없습니다.</p>
                 ) : (
@@ -406,14 +488,25 @@ export default function Page() {
                         onClick={() => setSelectedPatientId(p.id)}
                         className={[
                           "w-full text-left rounded-xl px-3 py-2 transition border",
-                          active ? "bg-slate-50 border-slate-300" : "bg-white border-slate-200 hover:bg-slate-50",
+                          active
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white border-slate-200 hover:bg-slate-50",
                         ].join(" ")}
                       >
                         <div className="flex items-center justify-between">
                           <div className="font-medium">{p.name}</div>
-                          <div className="text-xs text-slate-500">{p.next_session_date ? mmdd(p.next_session_date) : "-"}</div>
+                          <div className="text-xs opacity-80">
+                            {p.next_session_date ? mmdd(p.next_session_date) : "-"}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-600 mt-1 line-clamp-1">{p.concern || "주호소 미기입"}</div>
+                        <div className="text-xs opacity-80 mt-1 line-clamp-1">
+                          {p.concern || "주호소 미기입"}
+                        </div>
+                        {/* ⬇️ 초대코드 추가됨 */}
+                        <div className="text-[11px] opacity-70 mt-0.5 font-mono">
+                          {/* invite_codes 배열이 존재하면 첫번째의 code를 표시, 없으면 '-' 표시 */}
+                          Code: {p.invite_codes?.[0]?.code || '-'}
+                        </div>
                       </button>
                     );
                   })
@@ -439,41 +532,49 @@ export default function Page() {
                 <Btn onClick={createPatient}>저장 & 초대코드 생성</Btn>
               </div>
             </Card>
-          </div>
+          </aside>
 
           {/* Right */}
-          <div className="lg:col-span-8 space-y-4">
+          <section className="lg:col-span-8 space-y-4">
             {!selectedPatient ? (
               <Card>
                 <h2 className="font-semibold">환자를 선택하세요</h2>
-                <p className="text-sm text-slate-600 mt-1">왼쪽에서 환자를 클릭하면 세션 관리가 열립니다.</p>
+                <p className="text-sm text-slate-600 mt-1">
+                  왼쪽에서 환자를 클릭하면 세션 관리가 열립니다.
+                </p>
               </Card>
             ) : (
               <>
+                {/* Patient header */}
                 <Card>
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-semibold">{selectedPatient.name}</h2>
-                      <p className="text-sm text-slate-600 mt-1">{selectedPatient.concern || "주호소 미기입"}</p>
+                      <p className="text-sm text-slate-600 mt-1">
+                        {selectedPatient.concern || "주호소 미기입"}
+                      </p>
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-slate-500">다음 상담</div>
                       <div className="font-semibold">{selectedPatient.next_session_date ?? "-"}</div>
-                      <div className="text-xs text-slate-500 mt-1">리마인더: {selectedPatient.reminder_time ?? "-"}</div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        리마인더: {selectedPatient.reminder_time ?? "-"}
+                      </div>
                     </div>
                   </div>
 
-                  {selectedPatient.initial_memo ? (
-                    <div className="mt-4">
-                      <div className="text-xs text-slate-500">초진 메모</div>
-                      <div className="mt-1 text-sm bg-slate-100 rounded-xl p-3 whitespace-pre-wrap">{selectedPatient.initial_memo}</div>
+                  <div className="mt-4">
+                    <div className="text-xs text-slate-500">초진 메모</div>
+                    <div className="mt-1 text-sm bg-slate-50 border border-slate-200 rounded-xl p-3 whitespace-pre-wrap">
+                      {selectedPatient.initial_memo?.trim() ? selectedPatient.initial_memo : "—"}
                     </div>
-                  ) : null}
+                  </div>
                 </Card>
 
+                {/* Session control */}
                 <Card>
                   <div className="flex items-center justify-between">
-                    <h3 className="font-semibold">세션 관리</h3>
+                    <h3 className="font-semibold">세션</h3>
                     <span className="text-xs text-slate-500">총 {sessionsAsc.length}회</span>
                   </div>
 
@@ -488,11 +589,11 @@ export default function Page() {
                     </div>
                   </div>
 
-                  <div className="mt-5 flex items-center justify-between gap-3">
+                  <div className="mt-5 flex items-center justify-between gap-3 flex-wrap">
                     <div className="text-sm font-semibold">회차 구간</div>
                     {rangeSummaries.length ? (
                       <select
-                        className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                        className="w-full md:w-auto text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white"
                         value={selectedRangeKey || `${rangeSummaries[0].start_no}-${rangeSummaries[0].end_no}`}
                         onChange={(e) => setSelectedRangeKey(e.target.value)}
                       >
@@ -507,7 +608,7 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* (2) VIEW 기반 30초 요약 */}
+                  {/* 30s summary */}
                   <div className="mt-3 border border-slate-200 rounded-xl bg-slate-50 p-3">
                     <div className="text-sm font-semibold">30초 브리핑(자동)</div>
                     {!selectedRange ? (
@@ -517,7 +618,8 @@ export default function Page() {
                         <div>
                           <span className="text-slate-600">피크:</span>{" "}
                           <span className="font-semibold">
-                            {selectedRange.peak_intensity ?? "-"} {selectedRange.peak_date ? `(${selectedRange.peak_date})` : ""}
+                            {selectedRange.peak_intensity ?? "-"}{" "}
+                            {selectedRange.peak_date ? `(${selectedRange.peak_date})` : ""}
                           </span>
                         </div>
                         <div>
@@ -531,14 +633,18 @@ export default function Page() {
                         <div>
                           <span className="text-slate-600">컨디션:</span>{" "}
                           <span className="font-semibold">
-                            수면 {selectedRange.avg_sleep === null ? "-" : `${Number(selectedRange.avg_sleep).toFixed(1)}h`} / 약 O {selectedRange.meds_yes}
+                            수면{" "}
+                            {selectedRange.avg_sleep === null
+                              ? "-"
+                              : `${Number(selectedRange.avg_sleep).toFixed(1)}h`}{" "}
+                            / 약 O {selectedRange.meds_yes}
                           </span>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* (3) 내담자 로그 표 */}
+                  {/* table */}
                   <div className="mt-4 overflow-auto border border-slate-200 rounded-xl bg-white">
                     <table className="min-w-[760px] w-full text-sm">
                       <thead className="bg-slate-50 text-slate-700">
@@ -553,7 +659,11 @@ export default function Page() {
                       </thead>
                       <tbody>
                         {logsDesc.length === 0 ? (
-                          <tr><td colSpan={6} className="p-4 text-slate-600">이 구간에 기록이 없습니다.</td></tr>
+                          <tr>
+                            <td colSpan={6} className="p-4 text-slate-600">
+                              이 구간에 기록이 없습니다.
+                            </td>
+                          </tr>
                         ) : (
                           logsDesc.map((r) => (
                             <tr key={r.id} className="border-b border-slate-100">
@@ -562,9 +672,7 @@ export default function Page() {
                               <td className="p-3">{r.intensity}</td>
                               <td className="p-3">{r.trigger}</td>
                               <td className="p-3">{r.sleep_hours ?? "-"}</td>
-                              <td className="p-3">
-                                {r.took_meds == null ? "-" : r.took_meds ? "O" : "X"}
-                              </td>
+                              <td className="p-3">{r.took_meds == null ? "-" : r.took_meds ? "O" : "X"}</td>
                             </tr>
                           ))
                         )}
@@ -572,51 +680,74 @@ export default function Page() {
                     </table>
                   </div>
 
-                  {/* 숙제 */}
+                  {/* Homeworks */}
                   <div className="mt-5">
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-semibold">숙제</div>
-                      <span className="text-xs text-slate-500">활성 {activeDraft.length} / 비활성 {inactiveDraft.length}</span>
+                      <span className="text-xs text-slate-500">
+                        활성 {activeDraft.length} / 비활성 {inactiveDraft.length}
+                      </span>
                     </div>
 
                     <div className="mt-2 flex gap-2">
-                      <Field placeholder="숙제 추가" value={hwTitle} onChange={(e) => setHwTitle(e.target.value)} />
-                      <Btn variant="secondary" onClick={addHomeworkDraft}>추가</Btn>
+                      <Field placeholder="숙제 추가(중복 방지)" value={hwTitle} onChange={(e) => setHwTitle(e.target.value)} />
+                      <Btn variant="secondary" onClick={addHomeworkDraft}>
+                        추가
+                      </Btn>
                     </div>
 
                     <div className="mt-3 space-y-2">
                       {activeDraft.map((h) => (
-                        <div key={h.id} className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
+                        <div
+                          key={h.id}
+                          className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col md:flex-row gap-2 md:items-center md:justify-between"
+                        >
                           <input
                             className="w-full text-sm text-slate-900 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-slate-200"
                             value={h.title}
                             onChange={(e) => editHomework(h.id, e.target.value)}
                           />
                           <div className="flex gap-2">
-                            <Btn variant="secondary" onClick={() => toggleHomework(h.id, false)}>비활성</Btn>
-                            <Btn variant="danger" onClick={() => deleteHomework(h.id)}>삭제</Btn>
+                            <Btn variant="secondary" onClick={() => toggleHomework(h.id, false)}>
+                              비활성
+                            </Btn>
+                            <Btn variant="danger" onClick={() => deleteHomework(h.id)}>
+                              삭제
+                            </Btn>
                           </div>
                         </div>
                       ))}
 
                       {inactiveDraft.map((h) => (
-                        <div key={h.id} className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
+                        <div
+                          key={h.id}
+                          className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col md:flex-row gap-2 md:items-center md:justify-between"
+                        >
                           <input
                             className="w-full text-sm text-slate-700 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-slate-200"
                             value={h.title}
                             onChange={(e) => editHomework(h.id, e.target.value)}
                           />
                           <div className="flex gap-2">
-                            <Btn variant="secondary" onClick={() => toggleHomework(h.id, true)}>다시 활성</Btn>
-                            <Btn variant="danger" onClick={() => deleteHomework(h.id)}>삭제</Btn>
+                            <Btn variant="secondary" onClick={() => toggleHomework(h.id, true)}>
+                              다시 활성
+                            </Btn>
+                            <Btn variant="danger" onClick={() => deleteHomework(h.id)}>
+                              삭제
+                            </Btn>
                           </div>
                         </div>
                       ))}
 
-                      {homeworksDraft.filter((h) => h._deleted).map((h) => (
-                        <div key={h.id} className="border border-slate-200 rounded-xl p-3 bg-white flex items-center justify-between">
-                          <div className="text-sm text-slate-600 line-clamp-1">{h.title}</div>
-                          <Btn variant="secondary" onClick={() => undoDeleteHomework(h.id)}>삭제 취소</Btn>
+                      {deletedDraft.map((h) => (
+                        <div
+                          key={h.id}
+                          className="border border-red-200 rounded-xl p-3 bg-red-50 flex items-center justify-between"
+                        >
+                          <div className="text-sm text-slate-700 line-clamp-1">{h.title}</div>
+                          <Btn variant="secondary" onClick={() => undoDeleteHomework(h.id)}>
+                            삭제 취소
+                          </Btn>
                         </div>
                       ))}
                     </div>
@@ -624,11 +755,11 @@ export default function Page() {
                 </Card>
               </>
             )}
-          </div>
+          </section>
         </div>
       </main>
 
-      {/* Sticky bar: (1) 연타 방지 UX */}
+      {/* Sticky bar: 버튼 1개 원칙 */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
         <div className="max-w-6xl mx-auto p-3 flex items-center justify-between gap-3">
           <div className="text-sm text-slate-600">

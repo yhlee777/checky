@@ -1,5 +1,6 @@
 export type Role = "counselor" | "patient";
 
+// ⬇️ [수정됨] invite_codes 속성 추가
 export type Patient = {
   id: string;
   counselor_id: string;
@@ -10,6 +11,8 @@ export type Patient = {
   reminder_time: string | null;
   start_date: string;
   created_at: string;
+  // Join으로 가져오는 데이터는 있을 수도, 없을 수도 있으므로 optional(?) 처리
+  invite_codes?: { code: string }[]; 
 };
 
 export type SessionRow = {
