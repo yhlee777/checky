@@ -11,7 +11,7 @@ import type {
   RangeSummary,
   Role,
 } from "@/lib/types";
-import { Badge, Btn, Card, Field } from "@/components/ui";
+import { Btn, Card, Field } from "@/components/ui";
 
 /* ===============================
  * helpers
@@ -169,7 +169,6 @@ export default function Page() {
   const fetchPatients = async () => {
     const { data, error } = await supabase
       .from("patients")
-      // ⬇️ [수정됨] invite_codes 테이블을 조인해서 code를 가져옵니다.
       .select("*, invite_codes(code)")
       .order("created_at", { ascending: false });
     if (error) throw error;
@@ -221,7 +220,6 @@ export default function Page() {
     const arr = (data ?? []) as RangeSummary[];
     setRangeSummaries(arr);
 
-    // 안전: 선택값이 비었거나 현재 선택이 사라졌으면 최신으로
     if (arr.length) {
       const latestKey = `${arr[0].start_no}-${arr[0].end_no}`;
       if (!selectedRangeKey) setSelectedRangeKey(latestKey);
@@ -274,7 +272,9 @@ export default function Page() {
       setLogs([]);
       return;
     }
-    fetchLogsForRange(selectedPatientId, selectedRange.start_date, selectedRange.end_date).catch(console.error);
+    fetchLogsForRange(selectedPatientId, selectedRange.start_date, selectedRange.end_date).catch(
+      console.error
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPatientId, selectedRangeKey]);
 
@@ -285,7 +285,6 @@ export default function Page() {
     const title = hwTitle.trim();
     if (!title) return;
 
-    // ✅ 중복 방지(프론트): 삭제 아닌 항목들 기준으로 중복 금지
     const key = normTitle(title);
     const exists = homeworksDraft.some((h) => !h._deleted && normTitle(h.title) === key);
     if (exists) {
@@ -299,9 +298,7 @@ export default function Page() {
   };
 
   const editHomework = (id: string, title: string) => {
-    setHomeworksDraft((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, title, _dirty: true } : h))
-    );
+    setHomeworksDraft((prev) => prev.map((h) => (h.id === id ? { ...h, title, _dirty: true } : h)));
   };
 
   const toggleHomework = (id: string, is_active: boolean) => {
@@ -329,7 +326,6 @@ export default function Page() {
     const reminderDirty = (selectedPatient.reminder_time ?? "") !== (nextReminder ?? "");
     const hwDirty = homeworksDraft.some((h) => h._dirty);
 
-    // ✅ 숙제 “편집 중 공백” 방지(저장 전에 잡아주기)
     const hasBlank = homeworksDraft.some((h) => !h._deleted && !h.title.trim());
     if (hasBlank) return true;
 
@@ -339,11 +335,6 @@ export default function Page() {
   /* ===============================
    * actions
    * =============================== */
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    router.replace("/");
-  };
-
   const createPatient = async () => {
     if (!pName.trim()) return alert("이름 입력");
     if (!pConcern.trim()) return alert("주호소는 필수");
@@ -367,23 +358,14 @@ export default function Page() {
     setSelectedPatientId(data[0].patient_id);
   };
 
-  // ✅ 원자 RPC: complete_session_atomic
-  // - 예약 업데이트
-  // - 숙제 변경 반영
-  // - 세션 완료(다음 세션 생성 포함)
-  // ✅ 중복 방지:
-  // - 프론트: 버튼 연타 방지(saving)
-  // - 서버: RPC 내부에서 advisory lock + unique 로 “한번만”
   const saveAndComplete = async () => {
     if (!selectedPatient || saving) return;
 
-    // 저장 직전 검증: 공백 title 차단
     if (homeworksDraft.some((h) => !h._deleted && !h.title.trim())) {
       alert("숙제 제목이 비어있는 항목이 있습니다.");
       return;
     }
 
-    // 저장 직전 중복 검증(한 번 더)
     const seen = new Set<string>();
     for (const h of homeworksDraft) {
       if (h._deleted) continue;
@@ -426,7 +408,6 @@ export default function Page() {
         setSaveMsg("저장 완료");
       }
 
-      // 화면 전체를 “현재 사실”로 동기화
       await fetchPatients();
       await fetchSessions(selectedPatient.id);
       await fetchHomeworks(selectedPatient.id);
@@ -448,10 +429,8 @@ export default function Page() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
-      {/* Header */}
-
       {/* Body */}
-      <main className="max-w-6xl mx-auto px-4 py-4 pb-28">
+      <main className="max-w-6xl mx-auto px-4 py-4 pb-32">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Left */}
           <aside className="lg:col-span-4 space-y-4">
@@ -462,12 +441,19 @@ export default function Page() {
               </div>
 
               <div className="mt-3">
-                <Field placeholder="검색: 이름/주호소" value={q} onChange={(e) => setQ(e.target.value)} />
+                <Field
+                  placeholder="검색: 이름/주호소"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
               </div>
 
-              <div className="mt-3 max-h-[44vh] lg:max-h-[52vh] overflow-auto pr-1 space-y-1">
+              {/* ✅ 모바일: 펼침(max-h-none), 데스크탑: 스크롤 유지 */}
+              <div className="mt-3 max-h-none lg:max-h-[52vh] overflow-auto pr-1 space-y-1">
                 {filteredPatients.length === 0 ? (
-                  <p className="text-sm text-slate-600 py-6 text-center">아직 환자가 없습니다.</p>
+                  <p className="text-sm text-slate-600 py-6 text-center">
+                    아직 환자가 없습니다.
+                  </p>
                 ) : (
                   filteredPatients.map((p) => {
                     const active = p.id === selectedPatientId;
@@ -491,10 +477,8 @@ export default function Page() {
                         <div className="text-xs opacity-80 mt-1 line-clamp-1">
                           {p.concern || "주호소 미기입"}
                         </div>
-                        {/* ⬇️ 초대코드 추가됨 */}
                         <div className="text-[11px] opacity-70 mt-0.5 font-mono">
-                          {/* invite_codes 배열이 존재하면 첫번째의 code를 표시, 없으면 '-' 표시 */}
-                          Code: {p.invite_codes?.[0]?.code || '-'}
+                          Code: {p.invite_codes?.[0]?.code || "-"}
                         </div>
                       </button>
                     );
@@ -506,19 +490,37 @@ export default function Page() {
             <Card>
               <h3 className="font-semibold">환자 추가(초진)</h3>
               <div className="mt-3 space-y-2">
-                <Field placeholder="이름" value={pName} onChange={(e) => setPName(e.target.value)} />
-                <Field placeholder="주호소(필수)" value={pConcern} onChange={(e) => setPConcern(e.target.value)} />
+                <Field
+                  placeholder="이름"
+                  value={pName}
+                  onChange={(e) => setPName(e.target.value)}
+                />
+                <Field
+                  placeholder="주호소(필수)"
+                  value={pConcern}
+                  onChange={(e) => setPConcern(e.target.value)}
+                />
                 <textarea
                   className="w-full border border-slate-200 rounded-xl px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-slate-200 min-h-[92px]"
                   placeholder="초진 메모(약/금기/사건 등)"
                   value={pMemo}
                   onChange={(e) => setPMemo(e.target.value)}
                 />
-                <div className="grid grid-cols-2 gap-2">
-                  <Field type="date" value={pNextDate} onChange={(e) => setPNextDate(e.target.value)} />
-                  <Field type="time" value={pReminder} onChange={(e) => setPReminder(e.target.value)} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Field
+                    type="date"
+                    value={pNextDate}
+                    onChange={(e) => setPNextDate(e.target.value)}
+                  />
+                  <Field
+                    type="time"
+                    value={pReminder}
+                    onChange={(e) => setPReminder(e.target.value)}
+                  />
                 </div>
-                <Btn onClick={createPatient}>저장 & 초대코드 생성</Btn>
+                <Btn className="w-full" onClick={createPatient}>
+                  저장 & 초대코드 생성
+                </Btn>
               </div>
             </Card>
           </aside>
@@ -529,23 +531,25 @@ export default function Page() {
               <Card>
                 <h2 className="font-semibold">환자를 선택하세요</h2>
                 <p className="text-sm text-slate-600 mt-1">
-                  왼쪽에서 환자를 클릭하면 세션 관리가 열립니다.
+                  위에서 환자를 클릭하면 세션 관리가 열립니다.
                 </p>
               </Card>
             ) : (
               <>
                 {/* Patient header */}
                 <Card>
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-semibold">{selectedPatient.name}</h2>
                       <p className="text-sm text-slate-600 mt-1">
                         {selectedPatient.concern || "주호소 미기입"}
                       </p>
                     </div>
-                    <div className="text-right">
+                    <div className="sm:text-right">
                       <div className="text-xs text-slate-500">다음 상담</div>
-                      <div className="font-semibold">{selectedPatient.next_session_date ?? "-"}</div>
+                      <div className="font-semibold">
+                        {selectedPatient.next_session_date ?? "-"}
+                      </div>
                       <div className="text-xs text-slate-500 mt-1">
                         리마인더: {selectedPatient.reminder_time ?? "-"}
                       </div>
@@ -555,7 +559,9 @@ export default function Page() {
                   <div className="mt-4">
                     <div className="text-xs text-slate-500">초진 메모</div>
                     <div className="mt-1 text-sm bg-slate-50 border border-slate-200 rounded-xl p-3 whitespace-pre-wrap">
-                      {selectedPatient.initial_memo?.trim() ? selectedPatient.initial_memo : "—"}
+                      {selectedPatient.initial_memo?.trim()
+                        ? selectedPatient.initial_memo
+                        : "—"}
                     </div>
                   </div>
                 </Card>
@@ -564,36 +570,58 @@ export default function Page() {
                 <Card>
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold">세션</h3>
-                    <span className="text-xs text-slate-500">총 {sessionsAsc.length}회</span>
+
+                    {/* ✅ 너가 말한 “총 0회” 문제 대응: 0이어도 1회로 보이게 */}
+                    <span className="text-xs text-slate-500">
+                      총 {Math.max(1, sessionsAsc.length)}회
+                    </span>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {/* ✅ 모바일/태블릿: 1열, 데스크탑(lg): 2열 */}
+                  <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-2">
                     <div>
                       <div className="text-xs text-slate-500 mb-1">다음 예약일</div>
-                      <Field type="date" value={nextReserve} onChange={(e) => setNextReserve(e.target.value)} />
+                      <Field
+                        type="date"
+                        value={nextReserve}
+                        onChange={(e) => setNextReserve(e.target.value)}
+                      />
                     </div>
                     <div>
                       <div className="text-xs text-slate-500 mb-1">리마인더</div>
-                      <Field type="time" value={nextReminder} onChange={(e) => setNextReminder(e.target.value)} />
+                      <Field
+                        type="time"
+                        value={nextReminder}
+                        onChange={(e) => setNextReminder(e.target.value)}
+                      />
                     </div>
                   </div>
 
-                  <div className="mt-5 flex items-center justify-between gap-3 flex-wrap">
+                  {/* ✅ 모바일: 세로 스택 / 데스크탑: 가로 */}
+                  <div className="mt-5 flex flex-col lg:flex-row lg:items-center justify-between gap-2">
                     <div className="text-sm font-semibold">회차 구간</div>
                     {rangeSummaries.length ? (
                       <select
-                        className="w-full md:w-auto text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white"
-                        value={selectedRangeKey || `${rangeSummaries[0].start_no}-${rangeSummaries[0].end_no}`}
+                        className="w-full lg:w-auto text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                        value={
+                          selectedRangeKey ||
+                          `${rangeSummaries[0].start_no}-${rangeSummaries[0].end_no}`
+                        }
                         onChange={(e) => setSelectedRangeKey(e.target.value)}
                       >
                         {rangeSummaries.map((r) => (
-                          <option key={`${r.start_no}-${r.end_no}`} value={`${r.start_no}-${r.end_no}`}>
+                          <option
+                            key={`${r.start_no}-${r.end_no}`}
+                            value={`${r.start_no}-${r.end_no}`}
+                          >
                             {r.start_no}회차~{r.end_no}회차({mmdd(r.end_date)})
                           </option>
                         ))}
                       </select>
                     ) : (
-                      <span className="text-xs text-slate-500">세션 2회 이상부터 요약 생성</span>
+                      <span className="text-xs text-slate-500">
+                        세션 2회 이상부터 요약 생성
+                      </span>
                     )}
                   </div>
 
@@ -603,21 +631,27 @@ export default function Page() {
                     {!selectedRange ? (
                       <div className="text-sm text-slate-600 mt-1">표본 없음</div>
                     ) : (
-                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                      <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-2 text-sm">
                         <div>
                           <span className="text-slate-600">피크:</span>{" "}
                           <span className="font-semibold">
                             {selectedRange.peak_intensity ?? "-"}{" "}
-                            {selectedRange.peak_date ? `(${selectedRange.peak_date})` : ""}
+                            {selectedRange.peak_date
+                              ? `(${selectedRange.peak_date})`
+                              : ""}
                           </span>
                         </div>
                         <div>
                           <span className="text-slate-600">지배 감정:</span>{" "}
-                          <span className="font-semibold">{selectedRange.top_emotions || "-"}</span>
+                          <span className="font-semibold">
+                            {selectedRange.top_emotions || "-"}
+                          </span>
                         </div>
                         <div>
                           <span className="text-slate-600">반복 트리거:</span>{" "}
-                          <span className="font-semibold">{selectedRange.top_triggers || "-"}</span>
+                          <span className="font-semibold">
+                            {selectedRange.top_triggers || "-"}
+                          </span>
                         </div>
                         <div>
                           <span className="text-slate-600">컨디션:</span>{" "}
@@ -661,7 +695,9 @@ export default function Page() {
                               <td className="p-3">{r.intensity}</td>
                               <td className="p-3">{r.trigger}</td>
                               <td className="p-3">{r.sleep_hours ?? "-"}</td>
-                              <td className="p-3">{r.took_meds == null ? "-" : r.took_meds ? "O" : "X"}</td>
+                              <td className="p-3">
+                                {r.took_meds == null ? "-" : r.took_meds ? "O" : "X"}
+                              </td>
                             </tr>
                           ))
                         )}
@@ -678,9 +714,13 @@ export default function Page() {
                       </span>
                     </div>
 
-                    <div className="mt-2 flex gap-2">
-                      <Field placeholder="숙제 추가(중복 방지)" value={hwTitle} onChange={(e) => setHwTitle(e.target.value)} />
-                      <Btn variant="secondary" onClick={addHomeworkDraft}>
+                    <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                      <Field
+                        placeholder="숙제 추가(중복 방지)"
+                        value={hwTitle}
+                        onChange={(e) => setHwTitle(e.target.value)}
+                      />
+                      <Btn className="w-full sm:w-auto" variant="secondary" onClick={addHomeworkDraft}>
                         추가
                       </Btn>
                     </div>
@@ -689,14 +729,15 @@ export default function Page() {
                       {activeDraft.map((h) => (
                         <div
                           key={h.id}
-                          className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col md:flex-row gap-2 md:items-center md:justify-between"
+                          className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between"
                         >
                           <input
                             className="w-full text-sm text-slate-900 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-slate-200"
                             value={h.title}
                             onChange={(e) => editHomework(h.id, e.target.value)}
                           />
-                          <div className="flex gap-2">
+                          {/* ✅ 모바일: 버튼 세로, sm+: 가로 */}
+                          <div className="flex flex-col sm:flex-row gap-2">
                             <Btn variant="secondary" onClick={() => toggleHomework(h.id, false)}>
                               비활성
                             </Btn>
@@ -710,14 +751,14 @@ export default function Page() {
                       {inactiveDraft.map((h) => (
                         <div
                           key={h.id}
-                          className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col md:flex-row gap-2 md:items-center md:justify-between"
+                          className="border border-slate-200 rounded-xl p-3 bg-white flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between"
                         >
                           <input
                             className="w-full text-sm text-slate-700 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-slate-200"
                             value={h.title}
                             onChange={(e) => editHomework(h.id, e.target.value)}
                           />
-                          <div className="flex gap-2">
+                          <div className="flex flex-col sm:flex-row gap-2">
                             <Btn variant="secondary" onClick={() => toggleHomework(h.id, true)}>
                               다시 활성
                             </Btn>
@@ -731,10 +772,10 @@ export default function Page() {
                       {deletedDraft.map((h) => (
                         <div
                           key={h.id}
-                          className="border border-red-200 rounded-xl p-3 bg-red-50 flex items-center justify-between"
+                          className="border border-red-200 rounded-xl p-3 bg-red-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
                         >
                           <div className="text-sm text-slate-700 line-clamp-1">{h.title}</div>
-                          <Btn variant="secondary" onClick={() => undoDeleteHomework(h.id)}>
+                          <Btn className="w-full sm:w-auto" variant="secondary" onClick={() => undoDeleteHomework(h.id)}>
                             삭제 취소
                           </Btn>
                         </div>
@@ -750,7 +791,8 @@ export default function Page() {
 
       {/* Sticky bar: 버튼 1개 원칙 */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <div className="max-w-6xl mx-auto p-3 flex items-center justify-between gap-3">
+        {/* ✅ 모바일: 세로 스택, 데스크탑: 가로 */}
+        <div className="max-w-6xl mx-auto p-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           <div className="text-sm text-slate-600">
             {saveMsg ? (
               <span className="text-emerald-700 font-semibold">{saveMsg}</span>
@@ -761,7 +803,12 @@ export default function Page() {
             )}
           </div>
 
-          <Btn onClick={saveAndComplete} disabled={!selectedPatient || saving}>
+          {/* ✅ 모바일: 버튼 full width */}
+          <Btn
+            className="w-full sm:w-auto"
+            onClick={saveAndComplete}
+            disabled={!selectedPatient || saving}
+          >
             {saving ? "저장 중..." : "저장 & 이번 세션 완료"}
           </Btn>
         </div>
