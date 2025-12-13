@@ -6,6 +6,9 @@ import { supabase } from "@/lib/supabaseClient";
 import type { Role } from "@/lib/types";
 import { Badge, Btn, Card, Field } from "@/components/ui";
 
+// ⬇️ [추가됨] 알림 플러그인 가져오기
+import { LocalNotifications } from '@capacitor/local-notifications';
+
 export default function Page() {
   const router = useRouter();
 
@@ -14,6 +17,43 @@ export default function Page() {
 
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+
+  // ⬇️ [추가됨] 앱이 켜질 때 알림 권한을 요청하고 예약하는 로직
+  useEffect(() => {
+    const setupNotifications = async () => {
+      try {
+        // 1. 권한 요청 (처음 실행 시 팝업 뜸)
+        const permission = await LocalNotifications.requestPermissions();
+        
+        if (permission.display === 'granted') {
+          // 2. 기존에 등록된 알림이 있다면 삭제 (ID 1번) - 중복 예약 방지
+          await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
+
+          // 3. 매일 밤 11시(23:00)에 알림 예약
+          await LocalNotifications.schedule({
+            notifications: [
+              {
+                title: "오늘 하루는 어땠나요?",
+                body: "Checky에 오늘의 기분을 짧게 남겨주세요 🌙",
+                id: 1, // 고유 ID (나중에 이 알림을 취소하거나 수정할 때 사용)
+                schedule: { 
+                  on: { hour: 23, minute: 0 }, // 매일 23시 00분
+                  allowWhileIdle: true // 안드로이드 절전 모드에서도 알림 울림
+                },
+                // 아이콘이나 소리 설정도 가능 (기본값 사용)
+              }
+            ]
+          });
+          console.log("🔔 매일 밤 11시 알림 예약 완료");
+        }
+      } catch (error) {
+        console.error("알림 설정 중 오류 발생:", error);
+        // 웹 브라우저 등 알림을 지원하지 않는 환경에서는 에러가 날 수 있으므로 무시
+      }
+    };
+
+    setupNotifications();
+  }, []); // []는 컴포넌트가 처음 나타날 때 딱 한 번 실행하라는 뜻
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
