@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import type { Role } from "@/lib/types";
 import { Badge, Btn, Card, Field } from "@/components/ui";
-
-// ⬇️ [추가됨] 알림 플러그인 가져오기
-import { LocalNotifications } from '@capacitor/local-notifications';
+import { LocalNotifications } from "@capacitor/local-notifications";
 
 export default function Page() {
   const router = useRouter();
@@ -18,43 +16,42 @@ export default function Page() {
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
 
-  // ⬇️ [추가됨] 앱이 켜질 때 알림 권한을 요청하고 예약하는 로직
+  // ✅ 알림 권한 요청 + 23:00 반복 알림 예약
   useEffect(() => {
     const setupNotifications = async () => {
       try {
-        // 1. 권한 요청 (처음 실행 시 팝업 뜸)
         const permission = await LocalNotifications.requestPermissions();
-        
-        if (permission.display === 'granted') {
-          // 2. 기존에 등록된 알림이 있다면 삭제 (ID 1번) - 중복 예약 방지
+
+        if (permission.display === "granted") {
+          // 중복 예약 방지
           await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
 
-          // 3. 매일 밤 11시(23:00)에 알림 예약
           await LocalNotifications.schedule({
             notifications: [
               {
                 title: "오늘 하루는 어땠나요?",
-                body: "Checky에 오늘의 기분을 짧게 남겨주세요 🌙",
-                id: 1, // 고유 ID (나중에 이 알림을 취소하거나 수정할 때 사용)
-                schedule: { 
-                  on: { hour: 23, minute: 0 }, // 매일 23시 00분
-                  allowWhileIdle: true // 안드로이드 절전 모드에서도 알림 울림
+                body: "Checky에 오늘의 기록을 짧게 남겨주세요 🌙",
+                id: 1,
+                schedule: {
+                  on: { hour: 23, minute: 0 },
+                  allowWhileIdle: true,
                 },
-                // 아이콘이나 소리 설정도 가능 (기본값 사용)
-              }
-            ]
+              },
+            ],
           });
+
           console.log("🔔 매일 밤 11시 알림 예약 완료");
         }
       } catch (error) {
-        console.error("알림 설정 중 오류 발생:", error);
-        // 웹 브라우저 등 알림을 지원하지 않는 환경에서는 에러가 날 수 있으므로 무시
+        // 웹/미지원 환경은 무시
+        console.error("알림 설정 중 오류:", error);
       }
     };
 
     setupNotifications();
-  }, []); // []는 컴포넌트가 처음 나타날 때 딱 한 번 실행하라는 뜻
+  }, []);
 
+  // ✅ 세션 확인
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       const uid = data.session?.user?.id ?? null;
@@ -69,6 +66,7 @@ export default function Page() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // ✅ 로그인 상태면 role 보고 라우팅
   useEffect(() => {
     if (!userId) return;
 
@@ -86,7 +84,7 @@ export default function Page() {
 
       const role = data.role as Role;
       router.replace(role === "counselor" ? "/c" : "/p");
-    })();
+    })().catch(console.error);
   }, [userId, router]);
 
   const signIn = async () => {
@@ -107,9 +105,8 @@ export default function Page() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Desktop: 2-column / Mobile: stacked */}
       <div className="mx-auto max-w-6xl min-h-screen grid grid-cols-1 md:grid-cols-2">
-        {/* Left (Desktop-only brand panel) */}
+        {/* Left: Brand (Desktop only) */}
         <aside className="hidden md:flex flex-col justify-between p-10">
           <div>
             <div className="flex items-center justify-between">
@@ -118,41 +115,53 @@ export default function Page() {
             </div>
 
             <div className="mt-10">
+              {/* ✅ Hero */}
               <h1 className="text-3xl font-semibold leading-tight">
-                상담을 “기억”이 아니라
+                상담사가 <span className="text-slate-900">30초 만에</span>
                 <br />
-                <span className="text-slate-900">데이터 기반 흐름</span>으로.
+                지난 세션 맥락을 훑게 합니다.
               </h1>
+
+              {/* ✅ Sub (한 번만) */}
               <p className="mt-4 text-sm text-slate-600 leading-relaxed">
-                Checky는 공감 앱이 아닙니다.
+                “기억” 대신 <span className="font-semibold text-slate-900">세션 단위 데이터</span>로 정리합니다.
                 <br />
-                상담사가 <span className="text-slate-900 font-semibold">30초 전에 훑고</span> 판단할 수 있게 만드는
-                임상 보조 도구입니다.
+                기록은 짧게, 판단은 빠르게.
               </p>
 
+              {/* ✅ One-line scenario (Feature 위) */}
+              <p className="mt-6 text-sm text-slate-700 leading-relaxed">
+                <span className="font-semibold">세션 30초 전</span>, 구간만 고르면
+                <br />
+                지난 흐름과 숙제·예약까지 <span className="font-semibold">한 번에 정리됩니다.</span>
+              </p>
+
+              {/* ✅ Features (더 짧게) */}
               <div className="mt-8 grid grid-cols-1 gap-3">
                 <Feature
-                  title="세션 단위 정리"
-                  desc="회차 구간별로 기록을 묶어, 흐름을 한눈에."
+                  title="세션 단위 흐름"
+                  desc="회차 구간으로 자동 묶어 상담 전 스캔이 가능합니다."
                 />
                 <Feature
-                  title="표 기반"
-                  desc="그래프 과해석 없이 사실만 남깁니다."
+                  title="표 중심 요약"
+                  desc="강도·수면·약·숙제를 사실 중심으로 정리합니다."
                 />
                 <Feature
-                  title="원자 저장"
-                  desc="저장 한 번으로 예약·숙제·세션이 동시에 처리됩니다."
+                  title="한 번에 저장"
+                  desc="예약·숙제·세션 기록을 저장 한 번으로 처리합니다."
                 />
+              </div>
+
+              <div className="mt-6 text-xs text-slate-500">
+                For counselors: prep fast, decide with context.
               </div>
             </div>
           </div>
 
-          <div className="text-xs text-slate-500">
-            Clear · Calm · Clinical
-          </div>
+          <div className="text-xs text-slate-500">Clear · Calm · Clinical</div>
         </aside>
 
-        {/* Right (Auth Panel) */}
+        {/* Right: Auth */}
         <section className="flex items-center justify-center p-4 md:p-10">
           <div className="w-full max-w-md">
             {/* Mobile header */}
@@ -160,14 +169,13 @@ export default function Page() {
               <div>
                 <div className="font-bold tracking-tight text-xl">Checky</div>
                 <p className="text-sm text-slate-600 mt-1">
-                  상담 기록을 “세션 단위”로 정리합니다.
+                  상담사가 30초 만에 세션 맥락을 파악하는 기록 도구
                 </p>
               </div>
               <Badge>MVP</Badge>
             </div>
 
             {userId ? (
-              // 로그인 되어있으면 “분기 중”
               <Card className="w-full">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -186,16 +194,15 @@ export default function Page() {
                 </div>
 
                 <p className="mt-4 text-xs text-slate-500">
-                  이 화면이 오래 지속되면 /role 프로필을 확인하세요.
+                  오래 걸리면 /role 프로필을 확인하세요.
                 </p>
               </Card>
             ) : (
-              // 로그인/가입 화면
               <Card className="w-full">
-                {/* Desktop header inside card */}
+                {/* Desktop title inside card */}
                 <div className="hidden md:flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-bold text-slate-900">Checky</h2>
+                    <h2 className="text-xl font-bold text-slate-900">로그인</h2>
                     <p className="text-sm text-slate-600 mt-1">
                       상담 기록을 “세션 단위”로 정리합니다.
                     </p>
@@ -234,7 +241,6 @@ export default function Page() {
               </Card>
             )}
 
-            {/* Mobile footer */}
             <p className="md:hidden text-center text-xs text-slate-500 mt-4">
               Clear · Calm · Clinical
             </p>
