@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import type { Patient } from "@/lib/types";
 import { Btn, Card } from "@/components/ui";
+import { usePatientBoot } from "@/lib/usePatientBoot";
 
 type LogRow = {
   id: string;
@@ -41,9 +42,6 @@ function addDaysISO(iso: string, days: number) {
   const d = parseISO(iso);
   d.setDate(d.getDate() + days);
   return isoFromDate(d);
-}
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
 }
 function shortMMDD(iso: string) {
   return `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
@@ -100,13 +98,14 @@ function Stat({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3">
       <div className="text-[11px] text-slate-500 font-semibold">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-slate-900 font-mono tabular-nums">{value}</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900 font-mono tabular-nums">
+        {value}
+      </div>
       {sub && <div className="mt-1 text-[12px] text-slate-500">{sub}</div>}
     </div>
   );
 }
 
-/** 초간단 SVG 스파크라인 */
 function Sparkline({
   values,
   height = 44,
@@ -119,7 +118,9 @@ function Sparkline({
   const w = 220;
   const h = height;
 
-  const clean = values.map((v) => (typeof v === "number" && Number.isFinite(v) ? v : null));
+  const clean = values.map((v) =>
+    typeof v === "number" && Number.isFinite(v) ? v : null
+  );
   const nums = clean.filter((v): v is number => typeof v === "number");
   if (nums.length <= 1) {
     return (
@@ -135,12 +136,10 @@ function Sparkline({
 
   const pts = clean.map((v, i) => {
     const x = (i / Math.max(1, clean.length - 1)) * (w - 2) + 1;
-    const y =
-      v == null ? null : (h - 2) - ((v - min) / span) * (h - 2) + 1;
+    const y = v == null ? null : (h - 2) - ((v - min) / span) * (h - 2) + 1;
     return { x, y };
   });
 
-  // 끊긴 구간 처리: null이면 move
   let d = "";
   pts.forEach((p, i) => {
     if (p.y == null) return;
@@ -151,7 +150,13 @@ function Sparkline({
 
   return (
     <svg width="100%" viewBox={`0 0 ${w} ${h}`} className="block">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth={strokeWidth} className="text-emerald-600" />
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        className="text-emerald-600"
+      />
     </svg>
   );
 }
@@ -162,57 +167,29 @@ function topN(items: string[], n: number) {
   return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
+function StatusPill({ done }: { done: boolean }) {
+  return done ? (
+    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+      오늘 기록 완료 ✓
+    </span>
+  ) : (
+    <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+      오늘 기록 미완료
+    </span>
+  );
+}
+
 export default function InsightsPage() {
   const router = useRouter();
-  const [userId, setUserId] = useState<string | null>(null);
-  const [linkedPatient, setLinkedPatient] = useState<Patient | null>(null);
+
+  // ✅ 공통 부팅 훅
+  const { booting, userId, linkedPatient } = usePatientBoot();
 
   const [range, setRange] = useState<"7d" | "30d">("7d");
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [loading, setLoading] = useState(false);
 
   const today = useMemo(() => isoToday(), []);
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      const uid = data.session?.user?.id ?? null;
-      if (!uid) {
-        router.replace("/");
-        return;
-      }
-      setUserId(uid);
-
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("user_id", uid)
-        .single();
-      if (!prof?.role) {
-        router.replace("/role");
-        return;
-      }
-      if (prof.role !== "patient") {
-        router.replace("/c");
-        return;
-      }
-
-      const { data: link } = await supabase
-        .from("patient_links")
-        .select("patient_id")
-        .eq("user_id", uid)
-        .single();
-
-      if (link?.patient_id) {
-        const { data: p } = await supabase
-          .from("patients")
-          .select("*")
-          .eq("id", link.patient_id)
-          .single();
-        if (p) setLinkedPatient(p as Patient);
-      }
-    })().catch(console.error);
-  }, [router]);
 
   const fetchLogs = async (pid: string, rangeKey: "7d" | "30d") => {
     const end = today;
@@ -240,26 +217,38 @@ export default function InsightsPage() {
   }, [linkedPatient?.id, range]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const daySeries = useMemo(() => {
-    const days = range === "7d"
-      ? Array.from({ length: 7 }, (_, i) => addDaysISO(today, -6 + i))
-      : Array.from({ length: 30 }, (_, i) => addDaysISO(today, -29 + i));
+    const days =
+      range === "7d"
+        ? Array.from({ length: 7 }, (_, i) => addDaysISO(today, -6 + i))
+        : Array.from({ length: 30 }, (_, i) => addDaysISO(today, -29 + i));
 
     const map = new Map(logs.map((l) => [l.log_date, l]));
     return days.map((d) => ({ date: d, row: map.get(d) ?? null }));
   }, [logs, range, today]);
+
+  const todayDone = useMemo(() => {
+    const map = new Map(logs.map((l) => [l.log_date, l]));
+    return !!map.get(today);
+  }, [logs, today]);
 
   const stats = useMemo(() => {
     const rows = daySeries.map((x) => x.row).filter(Boolean) as LogRow[];
     const filled = rows.length;
     const total = daySeries.length;
 
-    const intens = rows.map((r) => r.intensity).filter((v): v is number => typeof v === "number");
+    const intens = rows
+      .map((r) => r.intensity)
+      .filter((v): v is number => typeof v === "number");
     const sleeps = rows
       .map((r) => r.sleep_hours)
       .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-    const avgInt = intens.length ? Math.round((intens.reduce((a, b) => a + b, 0) / intens.length) * 10) / 10 : null;
-    const avgSleep = sleeps.length ? Math.round((sleeps.reduce((a, b) => a + b, 0) / sleeps.length) * 10) / 10 : null;
+    const avgInt = intens.length
+      ? Math.round((intens.reduce((a, b) => a + b, 0) / intens.length) * 10) / 10
+      : null;
+    const avgSleep = sleeps.length
+      ? Math.round((sleeps.reduce((a, b) => a + b, 0) / sleeps.length) * 10) / 10
+      : null;
 
     const medsYes = rows.filter((r) => r.took_meds === true).length;
     const hwYes = rows.filter((r) => r.did_homework === true).length;
@@ -269,7 +258,6 @@ export default function InsightsPage() {
     const topEmo = topN(emotions, 3);
     const topTri = topN(triggers, 3);
 
-    // 인사이트(중립): 최고 강도 날과 수면
     const peak = rows
       .filter((r) => typeof r.intensity === "number")
       .sort((a, b) => (b.intensity ?? 0) - (a.intensity ?? 0))[0];
@@ -308,6 +296,8 @@ export default function InsightsPage() {
     [daySeries]
   );
 
+  // ✅ 핵심: 부팅 중엔 렌더 안 함(플래시 제거)
+  if (booting) return null;
   if (!userId) return null;
 
   return (
@@ -316,7 +306,9 @@ export default function InsightsPage() {
         {!linkedPatient ? (
           <Card>
             <div className="text-sm text-slate-700">연결된 환자 정보가 없습니다.</div>
-            <div className="mt-2 text-sm text-slate-500">먼저 “오늘 기록”에서 초대코드를 연결해주세요.</div>
+            <div className="mt-2 text-sm text-slate-500">
+              먼저 “오늘 기록”에서 초대코드를 연결해주세요.
+            </div>
             <a href="/p" className="inline-block mt-4 text-sm font-semibold text-emerald-700">
               오늘 기록으로 이동 →
             </a>
@@ -330,13 +322,18 @@ export default function InsightsPage() {
                   <div className="mt-1 text-sm text-slate-700">
                     {linkedPatient.name} · <span className="font-semibold">{today}</span>
                   </div>
+                  <div className="mt-2">
+                    <StatusPill done={todayDone} />
+                  </div>
                 </div>
 
                 <div className="flex gap-2">
                   <button
                     onClick={() => setRange("7d")}
                     className={`px-3 py-1.5 text-xs rounded-full border ${
-                      range === "7d" ? "bg-white shadow-sm font-bold border-slate-200" : "bg-transparent text-slate-500 border-transparent"
+                      range === "7d"
+                        ? "bg-white shadow-sm font-bold border-slate-200"
+                        : "bg-transparent text-slate-500 border-transparent"
                     }`}
                   >
                     7일
@@ -344,7 +341,9 @@ export default function InsightsPage() {
                   <button
                     onClick={() => setRange("30d")}
                     className={`px-3 py-1.5 text-xs rounded-full border ${
-                      range === "30d" ? "bg-white shadow-sm font-bold border-slate-200" : "bg-transparent text-slate-500 border-transparent"
+                      range === "30d"
+                        ? "bg-white shadow-sm font-bold border-slate-200"
+                        : "bg-transparent text-slate-500 border-transparent"
                     }`}
                   >
                     30일
@@ -355,19 +354,13 @@ export default function InsightsPage() {
               <div className="mt-3 text-sm text-slate-600">{stats.insight}</div>
             </Card>
 
-            {/* 스탯 카드 */}
             <div className="grid grid-cols-2 gap-3">
               <Stat label="기록한 날" value={`${stats.filled}/${stats.total}`} sub="빈 날도 괜찮아요" />
               <Stat label="평균 강도" value={stats.avgInt == null ? "-" : String(stats.avgInt)} sub="1~10" />
               <Stat label="평균 수면" value={stats.avgSleep == null ? "-" : `${stats.avgSleep}h`} sub="0~24" />
-              <Stat
-                label="루틴"
-                value={`${stats.medsYes} / ${stats.hwYes}`}
-                sub="약 복용일 / 숙제 수행일"
-              />
+              <Stat label="루틴" value={`${stats.medsYes} / ${stats.hwYes}`} sub="약 복용일 / 숙제 수행일" />
             </div>
 
-            {/* 그래프 */}
             <Card>
               <div className="flex items-center justify-between">
                 <div className="font-semibold text-slate-900">추이</div>
@@ -396,65 +389,61 @@ export default function InsightsPage() {
               </div>
             </Card>
 
-            {/* Top 3 */}
             <Card>
               <div className="font-semibold text-slate-900">자주 나온 항목</div>
 
               <div className="mt-3">
                 <div className="text-xs text-slate-500 font-semibold mb-2">감정 TOP3</div>
                 <div className="flex flex-wrap gap-2">
-                  {stats.topEmo.length ? stats.topEmo.map(([k, v]) => <Tag key={k}>{k} · {v}</Tag>) : <span className="text-sm text-slate-500">데이터가 더 필요해요</span>}
+                  {stats.topEmo.length ? (
+                    stats.topEmo.map(([k, v]) => (
+                      <Tag key={k}>
+                        {k} · {v}
+                      </Tag>
+                    ))
+                  ) : (
+                    <span className="text-sm text-slate-500">데이터가 더 필요해요</span>
+                  )}
                 </div>
               </div>
 
               <div className="mt-4">
                 <div className="text-xs text-slate-500 font-semibold mb-2">트리거 TOP3</div>
                 <div className="flex flex-wrap gap-2">
-                  {stats.topTri.length ? stats.topTri.map(([k, v]) => <Tag key={k}>{k} · {v}</Tag>) : <span className="text-sm text-slate-500">데이터가 더 필요해요</span>}
+                  {stats.topTri.length ? (
+                    stats.topTri.map(([k, v]) => (
+                      <Tag key={k}>
+                        {k} · {v}
+                      </Tag>
+                    ))
+                  ) : (
+                    <span className="text-sm text-slate-500">데이터가 더 필요해요</span>
+                  )}
                 </div>
               </div>
             </Card>
 
-            {/* 리스트(가볍게) */}
             <Card>
               <div className="flex items-center justify-between">
-                <div className="font-semibold text-slate-900">최근 기록</div>
-                <a href="/p" className="text-sm font-semibold text-emerald-700">
-                  오늘 기록 →
-                </a>
+                <div className="font-semibold text-slate-900">작은 보상</div>
+                <StatusPill done={todayDone} />
               </div>
 
-              <div className="mt-3 divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white overflow-hidden">
-                {daySeries.slice().reverse().map(({ date, row }) => (
-                  <div key={date} className="p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="font-mono tabular-nums text-sm font-semibold text-slate-900">
-                        {date} {date === today && <span className="text-slate-500">(오늘)</span>}
-                      </div>
-                      <div className="text-sm text-slate-600">
-                        강도 <span className="font-mono font-semibold">{row?.intensity ?? "-"}</span>
-                      </div>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {row ? `${row.emotion} · ${row.trigger}` : "기록 없음"}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <div className="font-semibold text-slate-900">작은 보상</div>
               <div className="mt-2 text-sm text-slate-600">
                 이번 {range === "7d" ? "7일" : "30일"}에서{" "}
                 <span className="font-semibold">{stats.filled}일</span> 기록했어요.
                 <br />
-                하루라도 남기면, 다음 주의 패턴이 더 선명해져요.
+                {todayDone
+                  ? "오늘은 완료했으니, 패턴만 가볍게 훑고 끝내도 충분해요."
+                  : "오늘 한 줄만 남기면, 내일 그래프가 더 선명해져요."}
               </div>
 
               <div className="mt-3">
-                <Btn className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => router.push("/p")}>
-                  오늘 기록하러 가기
+                <Btn
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => router.push("/p")}
+                >
+                  {todayDone ? "오늘 기록 수정하기" : "오늘 기록하러 가기"}
                 </Btn>
               </div>
             </Card>

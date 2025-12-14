@@ -7,6 +7,14 @@ import type { Role } from "@/lib/types";
 import { Badge, Btn, Card, Field } from "@/components/ui";
 import { LocalNotifications } from "@capacitor/local-notifications";
 
+function isoToday() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export default function Page() {
   const router = useRouter();
 
@@ -16,6 +24,9 @@ export default function Page() {
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
 
+  // ✅ (표시용) 환자일 때 오늘 기록 완료 여부
+  const [todayDone, setTodayDone] = useState<boolean | null>(null);
+
   // ✅ 알림 권한 요청 + 23:00 반복 알림 예약
   useEffect(() => {
     const setupNotifications = async () => {
@@ -23,7 +34,6 @@ export default function Page() {
         const permission = await LocalNotifications.requestPermissions();
 
         if (permission.display === "granted") {
-          // 중복 예약 방지
           await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
 
           await LocalNotifications.schedule({
@@ -43,7 +53,6 @@ export default function Page() {
           console.log("🔔 매일 밤 11시 알림 예약 완료");
         }
       } catch (error) {
-        // 웹/미지원 환경은 무시
         console.error("알림 설정 중 오류:", error);
       }
     };
@@ -71,20 +80,59 @@ export default function Page() {
     if (!userId) return;
 
     (async () => {
-      const { data, error } = await supabase
+      // 1) role
+      const { data: prof, error: profErr } = await supabase
         .from("profiles")
         .select("role")
         .eq("user_id", userId)
         .single();
 
-      if (error || !data?.role) {
+      if (profErr || !prof?.role) {
         router.replace("/role");
         return;
       }
 
-      const role = data.role as Role;
-      router.replace(role === "counselor" ? "/c" : "/p");
-    })().catch(console.error);
+      const role = prof.role as Role;
+
+      // counselor면 그냥 /c
+      if (role === "counselor") {
+        router.replace("/c");
+        return;
+      }
+
+      // 2) patient면: 링크된 patient_id 찾기
+      const { data: link, error: linkErr } = await supabase
+        .from("patient_links")
+        .select("patient_id")
+        .eq("user_id", userId)
+        .single();
+
+      const pid = link?.patient_id ?? null;
+
+      // 링크 없으면 /p로 보내서 초대코드 연결 UI 타게
+      if (linkErr || !pid) {
+        setTodayDone(null);
+        router.replace("/p");
+        return;
+      }
+
+      // 3) 오늘 로그 존재 여부 체크
+      const today = isoToday();
+      const { data: todayLog, error: logErr } = await supabase
+        .from("patient_logs")
+        .select("id")
+        .eq("patient_id", pid)
+        .eq("log_date", today)
+        .maybeSingle();
+
+      const done = !logErr && !!todayLog?.id;
+      setTodayDone(done);
+
+      // 4) 라우팅: 오늘 기록 있으면 insights, 없으면 p
+      router.replace(done ? "/p/insights" : "/p");
+    })().catch(() => {
+      router.replace("/p");
+    });
   }, [userId, router]);
 
   const signIn = async () => {
@@ -115,28 +163,24 @@ export default function Page() {
             </div>
 
             <div className="mt-10">
-              {/* ✅ Hero */}
               <h1 className="text-3xl font-semibold leading-tight">
                 상담사가 <span className="text-slate-900">30초 만에</span>
                 <br />
                 지난 세션 맥락을 훑게 합니다.
               </h1>
 
-              {/* ✅ Sub (한 번만) */}
               <p className="mt-4 text-sm text-slate-600 leading-relaxed">
                 “기억” 대신 <span className="font-semibold text-slate-900">세션 단위 데이터</span>로 정리합니다.
                 <br />
                 기록은 짧게, 판단은 빠르게.
               </p>
 
-              {/* ✅ One-line scenario (Feature 위) */}
               <p className="mt-6 text-sm text-slate-700 leading-relaxed">
                 <span className="font-semibold">세션 30초 전</span>, 구간만 고르면
                 <br />
                 지난 흐름과 숙제·예약까지 <span className="font-semibold">한 번에 정리됩니다.</span>
               </p>
 
-              {/* ✅ Features (더 짧게) */}
               <div className="mt-8 grid grid-cols-1 gap-3">
                 <Feature
                   title="세션 단위 흐름"
@@ -179,12 +223,27 @@ export default function Page() {
               <Card className="w-full">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-900">역할 확인 중</h2>
+                    <h2 className="text-lg font-semibold text-slate-900">이동 중</h2>
                     <p className="text-sm text-slate-600 mt-1">
-                      프로필을 확인하고 화면을 이동합니다…
+                      프로필/기록 상태를 확인하고 화면을 이동합니다…
                     </p>
                   </div>
-                  <Badge>MVP</Badge>
+
+                  <div className="flex flex-col items-end gap-2">
+                    <Badge>MVP</Badge>
+
+                    {/* ✅ 오늘 기록 완료 표시 (patient일 때만 값이 잡힘) */}
+                    {todayDone === true && (
+                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                        오늘 기록 완료 ✓
+                      </span>
+                    )}
+                    {todayDone === false && (
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                        오늘 기록 미완료
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-5">
@@ -194,12 +253,11 @@ export default function Page() {
                 </div>
 
                 <p className="mt-4 text-xs text-slate-500">
-                  오래 걸리면 /role 프로필을 확인하세요.
+                  오래 걸리면 /role 또는 /p를 직접 열어주세요.
                 </p>
               </Card>
             ) : (
               <Card className="w-full">
-                {/* Desktop title inside card */}
                 <div className="hidden md:flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-bold text-slate-900">로그인</h2>

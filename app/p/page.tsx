@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import type { Patient } from "@/lib/types";
 import { Btn, Card, Field } from "@/components/ui";
+import { usePatientBoot } from "@/lib/usePatientBoot";
 
 const EMOTION_OPTIONS = [
   "불안",
@@ -98,13 +99,33 @@ function Pill({
       : "bg-slate-50 text-slate-600 border-slate-200";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}
+    >
       {children}
     </span>
   );
 }
 
-function SmallError({ show, children }: { show: boolean; children: React.ReactNode }) {
+function StatusPill({ done }: { done: boolean }) {
+  return done ? (
+    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+      오늘 기록 완료 ✓
+    </span>
+  ) : (
+    <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+      오늘 기록 미완료
+    </span>
+  );
+}
+
+function SmallError({
+  show,
+  children,
+}: {
+  show: boolean;
+  children: React.ReactNode;
+}) {
   if (!show) return null;
   return <div className="mt-1 text-[12px] text-slate-500">{children}</div>;
 }
@@ -143,9 +164,10 @@ function BottomTabs({ active }: { active: "today" | "insights" }) {
 export default function Page() {
   const router = useRouter();
 
-  const [userId, setUserId] = useState<string | null>(null);
-  const [linkedPatient, setLinkedPatient] = useState<Patient | null>(null);
+  // ✅ 공통 부팅 훅
+  const { booting, userId, linkedPatient: bootPatient } = usePatientBoot();
 
+  const [linkedPatient, setLinkedPatient] = useState<Patient | null>(null);
   const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -158,7 +180,9 @@ export default function Page() {
 
   // ===== 숙제 목록 & 로컬 체크
   const [homeworks, setHomeworks] = useState<HomeworkItem[]>([]);
-  const [checkedHomeworks, setCheckedHomeworks] = useState<Set<string>>(new Set());
+  const [checkedHomeworks, setCheckedHomeworks] = useState<Set<string>>(
+    new Set()
+  );
 
   // ===== form
   const [todayLogId, setTodayLogId] = useState<string | null>(null);
@@ -171,19 +195,20 @@ export default function Page() {
 
   const [intensity, setIntensity] = useState(5);
 
-  // ✅ 수면: 슬라이더+프리셋(+선택적으로 직접입력)
   const [sleepRaw, setSleepRaw] = useState<string>("6.5");
   const [sleepNum, setSleepNum] = useState<number | null>(6.5);
 
-  // ✅ 약: 중립 파스텔
   const [tookMeds, setTookMeds] = useState<boolean | null>(null);
-
   const [memo, setMemo] = useState("");
 
-  // UI 메시지 (alert 대신)
   const [saveMsg, setSaveMsg] = useState("");
   const hydratedOnceRef = useRef(false);
   const triedSubmitRef = useRef(false);
+
+  // ✅ bootPatient를 로컬 state로 반영(초대코드 redeem 시 setLinkedPatient도 가능하게)
+  useEffect(() => {
+    setLinkedPatient(bootPatient);
+  }, [bootPatient]);
 
   const emotionFinal = useMemo(() => {
     if (emotionPick !== "기타") return emotionPick;
@@ -195,16 +220,15 @@ export default function Page() {
     return `기타: ${triggerOther.trim()}`;
   }, [triggerPick, triggerOther]);
 
-  /* ===============================
-   * validation (inline errors)
-   * =============================== */
   const emotionError = useMemo(() => {
-    if (emotionPick === "기타" && !emotionOther.trim()) return "감정을 직접 입력해주세요.";
+    if (emotionPick === "기타" && !emotionOther.trim())
+      return "감정을 직접 입력해주세요.";
     return "";
   }, [emotionPick, emotionOther]);
 
   const triggerError = useMemo(() => {
-    if (triggerPick === "기타" && !triggerOther.trim()) return "원인을 직접 입력해주세요.";
+    if (triggerPick === "기타" && !triggerOther.trim())
+      return "원인을 직접 입력해주세요.";
     return "";
   }, [triggerPick, triggerOther]);
 
@@ -225,51 +249,6 @@ export default function Page() {
   }, [emotionError, triggerError, sleepError]);
 
   const showErrors = triedSubmitRef.current && !canSubmit;
-
-  /* ===============================
-   * auth & data fetching
-   * =============================== */
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      const uid = data.session?.user?.id ?? null;
-      if (!uid) {
-        router.replace("/");
-        return;
-      }
-      setUserId(uid);
-
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("user_id", uid)
-        .single();
-
-      if (!prof?.role) {
-        router.replace("/role");
-        return;
-      }
-      if (prof.role !== "patient") {
-        router.replace("/c");
-        return;
-      }
-
-      const { data: link } = await supabase
-        .from("patient_links")
-        .select("patient_id")
-        .eq("user_id", uid)
-        .single();
-
-      if (link?.patient_id) {
-        const { data: p } = await supabase
-          .from("patients")
-          .select("*")
-          .eq("id", link.patient_id)
-          .single();
-        if (p) setLinkedPatient(p as Patient);
-      }
-    })().catch(console.error);
-  }, [router]);
 
   const fetchHomeworks = async (pid: string) => {
     const { data, error } = await supabase
@@ -320,12 +299,7 @@ export default function Page() {
 
     setTookMeds(row?.took_meds == null ? null : Boolean(row.took_meds));
     setMemo(row?.memo ?? "");
-
-    if (row?.did_homework) {
-      setCheckedHomeworks(new Set());
-    } else {
-      setCheckedHomeworks(new Set());
-    }
+    setCheckedHomeworks(new Set());
   };
 
   const fetchLogs = async (pid: string, rangeKey: "7d" | "30d") => {
@@ -361,13 +335,15 @@ export default function Page() {
     if (!linkedPatient) return;
     fetchLogs(linkedPatient.id, range).catch(console.error);
     fetchHomeworks(linkedPatient.id).catch(console.error);
-  }, [linkedPatient?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedPatient?.id]);
 
   useEffect(() => {
     if (!linkedPatient) return;
     if (!showMyLogs) return;
     fetchLogs(linkedPatient.id, range).catch(console.error);
-  }, [range, showMyLogs, linkedPatient?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range, showMyLogs, linkedPatient?.id]);
 
   useEffect(() => {
     if (homeworks.length > 0 && todayLogId) {
@@ -381,17 +357,23 @@ export default function Page() {
 
   const recent3 = useMemo(() => {
     const days = [addDaysISO(today, -2), addDaysISO(today, -1), today];
-    const map = new Map(myLogs.map((l) => [l.log_date, l]));
+    const map = new Map(myLogs.map((l) => [l.log_date, l] as const));
     const rows = days.map((d) => ({ date: d, row: map.get(d) ?? null }));
 
-    const ints = rows.map((x) => x.row?.intensity).filter((v): v is number => typeof v === "number");
+    const ints = rows
+      .map((x) => x.row?.intensity)
+      .filter((v): v is number => typeof v === "number");
     const sleeps = rows
       .map((x) => x.row?.sleep_hours)
       .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
-    const avgInt = ints.length ? Math.round((ints.reduce((a, b) => a + b, 0) / ints.length) * 10) / 10 : null;
-    const avgSleep =
-      sleeps.length ? Math.round((sleeps.reduce((a, b) => a + b, 0) / sleeps.length) * 10) / 10 : null;
+    const avgInt = ints.length
+      ? Math.round((ints.reduce((a, b) => a + b, 0) / ints.length) * 10) / 10
+      : null;
+    const avgSleep = sleeps.length
+      ? Math.round((sleeps.reduce((a, b) => a + b, 0) / sleeps.length) * 10) /
+        10
+      : null;
 
     const medsDays = rows.filter((x) => x.row?.took_meds === true).length;
     const hwDays = rows.filter((x) => x.row?.did_homework === true).length;
@@ -403,9 +385,10 @@ export default function Page() {
     return { rows, avgInt, avgSleep, medsDays, hwDays, filledDays, topEmotion };
   }, [myLogs, today]);
 
-  /* ===============================
-   * actions
-   * =============================== */
+  const todayDone = useMemo(() => {
+    return myLogs.some((l) => l.log_date === today);
+  }, [myLogs, today]);
+
   const redeem = async () => {
     const code = inviteCode.trim();
     if (!code) {
@@ -416,13 +399,20 @@ export default function Page() {
     setLoading(true);
     setSaveMsg("");
     try {
-      const { data, error } = await supabase.rpc("redeem_invite_code", { p_code: code });
+      const { data, error } = await supabase.rpc("redeem_invite_code", {
+        p_code: code,
+      });
       if (error) throw error;
 
       const pid = data?.[0]?.patient_id;
       if (!pid) throw new Error("연결 실패");
 
-      const { data: p } = await supabase.from("patients").select("*").eq("id", pid).single();
+      const { data: p } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("id", pid)
+        .single();
+
       setLinkedPatient(p as Patient);
       setInviteCode("");
 
@@ -451,6 +441,8 @@ export default function Page() {
       return;
     }
 
+    const wasNew = !todayLogId;
+
     setLoading(true);
     setSaveMsg("");
 
@@ -460,14 +452,19 @@ export default function Page() {
       const sleepTrim = sleepRaw.trim();
       const sleep = sleepTrim ? Number(sleepTrim) : null;
 
-      const payload: Partial<LogRow> & { patient_id: string; counselor_id: string; log_date: string } = {
+      const payload: Partial<LogRow> & {
+        patient_id: string;
+        counselor_id: string;
+        log_date: string;
+      } = {
         patient_id: linkedPatient.id,
         counselor_id: (linkedPatient as any).counselor_id,
         log_date: today,
         emotion: emotionFinal,
         trigger: triggerFinal,
         intensity,
-        sleep_hours: sleep != null && Number.isFinite(sleep) ? clamp(sleep, 0, 24) : null,
+        sleep_hours:
+          sleep != null && Number.isFinite(sleep) ? clamp(sleep, 0, 24) : null,
         took_meds: tookMeds,
         did_homework: isDidHomework,
         memo: memo.trim() ? memo.trim() : null,
@@ -488,8 +485,12 @@ export default function Page() {
 
       await fetchLogs(linkedPatient.id, range);
 
-      setSaveMsg(todayLogId ? "수정 완료" : "저장 완료");
-      setTimeout(() => setSaveMsg(""), 1500);
+      setSaveMsg(wasNew ? "저장 완료" : "수정 완료");
+      setTimeout(() => setSaveMsg(""), 1200);
+
+      if (wasNew) {
+        router.push("/p/insights");
+      }
     } catch (e: any) {
       setSaveMsg(e?.message ?? "저장 실패");
     } finally {
@@ -527,6 +528,8 @@ export default function Page() {
     if (Number.isFinite(n)) setSleepNum(clamp(n, 0, 24));
   };
 
+  // ✅ 핵심: 부팅 중엔 렌더 안 함(플래시 제거)
+  if (booting) return null;
   if (!userId) return null;
 
   return (
@@ -537,7 +540,11 @@ export default function Page() {
             <h2 className="font-semibold">초대코드 연결</h2>
 
             <div className="mt-3 flex gap-2">
-              <Field placeholder="8자리 코드" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} />
+              <Field
+                placeholder="8자리 코드"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+              />
               <Btn onClick={() => void redeem()} disabled={loading}>
                 연결
               </Btn>
@@ -554,6 +561,9 @@ export default function Page() {
                   <div className="mt-1 text-sm text-slate-700">
                     오늘: <span className="font-semibold">{today}</span>
                   </div>
+                  <div className="mt-2">
+                    <StatusPill done={todayDone} />
+                  </div>
                 </div>
 
                 <Btn variant="secondary" onClick={() => setShowMyLogs(!showMyLogs)}>
@@ -563,8 +573,12 @@ export default function Page() {
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Pill>{`최근 3일: ${recent3.filledDays}/3 기록`}</Pill>
-                <Pill tone="neutral">{recent3.avgInt != null ? `평균 강도 ${recent3.avgInt}` : "강도 -"}</Pill>
-                <Pill tone="neutral">{recent3.avgSleep != null ? `평균 수면 ${recent3.avgSleep}h` : "수면 -"}</Pill>
+                <Pill tone="neutral">
+                  {recent3.avgInt != null ? `평균 강도 ${recent3.avgInt}` : "강도 -"}
+                </Pill>
+                <Pill tone="neutral">
+                  {recent3.avgSleep != null ? `평균 수면 ${recent3.avgSleep}h` : "수면 -"}
+                </Pill>
                 <Pill>{`약 ${recent3.medsDays}일`}</Pill>
                 <Pill>{`숙제 ${recent3.hwDays}일`}</Pill>
                 {recent3.topEmotion && <Pill tone="good">{recent3.topEmotion}</Pill>}
@@ -651,8 +665,15 @@ export default function Page() {
                   </div>
                   {emotionPick === "기타" && (
                     <>
-                      <Field className="mt-2" placeholder="감정 직접 입력" value={emotionOther} onChange={(e) => setEmotionOther(e.target.value)} />
-                      <SmallError show={triedSubmitRef.current && !!emotionError}>{emotionError}</SmallError>
+                      <Field
+                        className="mt-2"
+                        placeholder="감정 직접 입력"
+                        value={emotionOther}
+                        onChange={(e) => setEmotionOther(e.target.value)}
+                      />
+                      <SmallError show={triedSubmitRef.current && !!emotionError}>
+                        {emotionError}
+                      </SmallError>
                     </>
                   )}
                 </div>
@@ -677,8 +698,15 @@ export default function Page() {
                   </div>
                   {triggerPick === "기타" && (
                     <>
-                      <Field className="mt-2" placeholder="원인 직접 입력" value={triggerOther} onChange={(e) => setTriggerOther(e.target.value)} />
-                      <SmallError show={triedSubmitRef.current && !!triggerError}>{triggerError}</SmallError>
+                      <Field
+                        className="mt-2"
+                        placeholder="원인 직접 입력"
+                        value={triggerOther}
+                        onChange={(e) => setTriggerOther(e.target.value)}
+                      />
+                      <SmallError show={triedSubmitRef.current && !!triggerError}>
+                        {triggerError}
+                      </SmallError>
                     </>
                   )}
                 </div>
@@ -749,7 +777,9 @@ export default function Page() {
                       />
                       <span className="absolute right-3 top-2.5 text-sm text-slate-400">h</span>
                     </div>
-                    <SmallError show={triedSubmitRef.current && !!sleepError}>{sleepError}</SmallError>
+                    <SmallError show={triedSubmitRef.current && !!sleepError}>
+                      {sleepError}
+                    </SmallError>
                   </div>
                 </div>
 
@@ -819,7 +849,9 @@ export default function Page() {
                     </div>
                   )}
 
-                  <div className="text-[12px] text-slate-500">하나라도 체크하면 “오늘 숙제 수행”으로 저장돼요.</div>
+                  <div className="text-[12px] text-slate-500">
+                    하나라도 체크하면 “오늘 숙제 수행”으로 저장돼요.
+                  </div>
                 </div>
 
                 {/* 7/7 메모 */}
@@ -833,7 +865,6 @@ export default function Page() {
                   />
                 </div>
 
-                {/* 저장 */}
                 <Btn
                   onClick={() => void submitLog()}
                   disabled={loading || !canSubmit}
@@ -842,7 +873,11 @@ export default function Page() {
                   {loading ? "저장 중..." : todayLogId ? "오늘 기록 수정하기" : "오늘 기록 저장하기"}
                 </Btn>
 
-                {showErrors && <div className="text-sm text-slate-600 text-center">위 항목을 조금만 확인해줘요 🙂</div>}
+                {showErrors && (
+                  <div className="text-sm text-slate-600 text-center">
+                    위 항목을 조금만 확인해줘요 🙂
+                  </div>
+                )}
               </div>
             </Card>
           </>

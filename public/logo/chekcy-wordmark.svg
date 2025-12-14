@@ -1,0 +1,20 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 160 40"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Chekcy logo wordmark</title>
+  <desc id="desc">Green text logo that spells chekcy</desc>
+  <rect width="160" height="40" fill="none" />
+  <text
+    x="0"
+    y="28"
+    font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="26"
+    font-weight="600"
+    fill="#16a34a"
+  >
+    chekcy
+  </text>
+</svg>

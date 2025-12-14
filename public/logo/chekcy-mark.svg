@@ -1,0 +1,25 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 120 80"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Chekcy brand check mark</title>
+  <desc id="desc">V-shaped brush style check mark in Chekcy green on white background</desc>
+
+  <!-- 흰 배경 -->
+  <rect width="120" height="80" fill="#ffffff" />
+
+  <!-- V자 형태의 붓터치 체크 -->
+  <path
+    d="M10 40
+       L28 60
+       C35 50, 42 42, 50 35
+       C62 25, 78 20, 108 18"
+    fill="none"
+    stroke="#16a34a"
+    stroke-width="8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
