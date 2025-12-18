@@ -1,4 +1,4 @@
-package com.example.app;
+package com.yhlee.checky;
 
 import com.getcapacitor.BridgeActivity;
 

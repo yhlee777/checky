@@ -1,10 +1,19 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 // ⬇️ [유지] 기존 헤더 컴포넌트
 import { SiteHeader } from "@/components/SiteHeader";
 
 const inter = Inter({ subsets: ["latin"] });
+
+// ⬇️ [추가] 모바일 뷰포트 설정 (확대 방지, 노치 대응)
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+};
 
 export const metadata: Metadata = {
   title: "Checky - 마음 챙김 파트너",

@@ -1,23 +1,37 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.example.app"
+    namespace "com.yhlee.checky"
     compileSdk rootProject.ext.compileSdkVersion
+
     defaultConfig {
-        applicationId "com.checky.app"
+        applicationId "com.yhlee.checky"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    // ⬇️ [1] 서명 설정 추가 (비밀번호와 파일명을 본인 것에 맞게 수정하세요!)
+    signingConfigs {
+        release {
+            // 주의: 파일이 android/app 폴더 안에 있어야 합니다. 확장자(.jks) 꼭 확인!
+            storeFile file("upload-keystore.jks") 
+            storePassword "checky1234"
+            keyAlias "key0"  // 키 생성할 때 설정한 별칭 (보통 key0 아니면 upload)
+            keyPassword "checky1234"
+        }
+    }
+
     buildTypes {
         release {
+            // ⬇️ [2] 위에서 만든 서명 설정을 여기에 연결
+            signingConfig signingConfigs.release
+            
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -41,8 +55,15 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
 
-    // ⬇️ [수정됨] 코틀린 버전 충돌 해결을 위해 추가한 줄
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"
+    // 코틀린 중복 클래스 오류 해결 코드
+    constraints {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22") {
+            because("kotlin-stdlib-jdk7 is now a part of kotlin-stdlib")
+        }
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22") {
+            because("kotlin-stdlib-jdk8 is now a part of kotlin-stdlib")
+        }
+    }
 }
 
 apply from: 'capacitor.build.gradle'

@@ -1,4 +1,5 @@
-export type Role = "counselor" | "patient";
+export type Role = "counselor" | "patient" | "center_admin";
+
 
 // ⬇️ [수정됨] invite_codes 속성 추가
 export type Patient = {
